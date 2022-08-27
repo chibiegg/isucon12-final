@@ -384,7 +384,7 @@ func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, r
 	if _, ok := oneTimeTokenMap[userID]; !ok {
 		tkp := new(UserOneTimeToken)
 		query := "SELECT * FROM user_one_time_tokens WHERE token=? AND token_type=? AND deleted_at IS NULL"
-		if err := db1.Get(tk, query, token, tokenType); err != nil {
+		if err := db1.Get(tkp, query, token, tokenType); err != nil {
 			oneTimeTokenMutex.Unlock()
 			if err == sql.ErrNoRows {
 				return ErrInvalidToken
