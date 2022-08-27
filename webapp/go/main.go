@@ -496,7 +496,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 }
 
 // obtainPresent プレゼント付与処理 (DB2で処理する)
-func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*UserPresent, error) {
+func (h *Handler) obtainPresent(tx2 *sqlx.Tx, userID int64, requestAt int64) ([]*UserPresent, error) {
 	normalPresents := make([]*PresentAllMaster, 0, 50)
 	// query := "SELECT * FROM present_all_masters WHERE registered_start_at <= ? AND registered_end_at >= ?"
 
@@ -506,7 +506,7 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 	LEFT JOIN user_present_all_received_history h ON m.id = h.present_all_id AND h.user_id=?
 	WHERE h.user_id IS NULL AND registered_start_at <= ? AND registered_end_at >= ?;
 	`
-	if err := tx.Select(&normalPresents, query, userID, requestAt, requestAt); err != nil {
+	if err := tx2.Select(&normalPresents, query, userID, requestAt, requestAt); err != nil {
 		return nil, err
 	}
 
@@ -555,7 +555,7 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 	INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
 	VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)
 	`
-		if _, err := tx.NamedExec(
+		if _, err := tx2.NamedExec(
 			query, obtainPresents,
 		); err != nil {
 			return nil, err
@@ -565,7 +565,7 @@ func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*
 	INSERT INTO user_present_all_received_history(id, user_id, present_all_id, received_at, created_at, updated_at)
 	VALUES (:id, :user_id, :present_all_id, :received_at, :created_at, :updated_at)
 	`
-		if _, err := tx.NamedExec(
+		if _, err := tx2.NamedExec(
 			query, obtainHistories,
 		); err != nil {
 			return nil, err
