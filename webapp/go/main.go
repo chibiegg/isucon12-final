@@ -1315,18 +1315,6 @@ func (h *Handler) drawGacha(c echo.Context) error {
 		}
 	}
 
-	tx, err := db1.Beginx()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	tx2, err := db2.Beginx()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-	defer tx2.Rollback() //nolint:errcheck
-
 	// 直付与 => プレゼントに入れる
 	presents := make([]*UserPresent, 0, gachaCount)
 	for _, v := range result {
@@ -1346,7 +1334,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 			UpdatedAt:      requestAt,
 		}
 		query = "INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-		if _, err := tx2.Exec(query, present.ID, present.UserID, present.SentAt, present.ItemType, present.ItemID, present.Amount, present.PresentMessage, present.CreatedAt, present.UpdatedAt); err != nil {
+		if _, err := db2.Exec(query, present.ID, present.UserID, present.SentAt, present.ItemType, present.ItemID, present.Amount, present.PresentMessage, present.CreatedAt, present.UpdatedAt); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 
@@ -1356,17 +1344,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	// isuconをへらす
 	query = "UPDATE users SET isu_coin=? WHERE id=?"
 	totalCoin := user.IsuCoin - consumedCoin
-	if _, err := tx.Exec(query, totalCoin, user.ID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	err = tx2.Commit()
-	if err != nil {
+	if _, err := db1.Exec(query, totalCoin, user.ID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1727,22 +1705,15 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 		card.AmountPerSec += (card.MaxAmountPerSec - card.BaseAmountPerSec) / (card.MaxLevel - 1)
 	}
 
-	tx, err := db1.Beginx()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	defer tx.Rollback() //nolint:errcheck
-
 	// cardのlvと経験値の更新、itemの消費
 	query = "UPDATE user_cards SET amount_per_sec=?, level=?, total_exp=?, updated_at=? WHERE id=?"
-	if _, err = tx.Exec(query, card.AmountPerSec, card.Level, card.TotalExp, requestAt, card.ID); err != nil {
+	if _, err = db1.Exec(query, card.AmountPerSec, card.Level, card.TotalExp, requestAt, card.ID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "UPDATE user_items SET amount=?, updated_at=? WHERE id=?"
 	for _, v := range items {
-		if _, err = tx.Exec(query, v.Amount-v.ConsumeAmount, requestAt, v.ID); err != nil {
+		if _, err = db1.Exec(query, v.Amount-v.ConsumeAmount, requestAt, v.ID); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	}
@@ -1750,7 +1721,7 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	// get response data
 	resultCard := new(UserCard)
 	query = "SELECT * FROM user_cards WHERE id=?"
-	if err = tx.Get(resultCard, query, card.ID); err != nil {
+	if err = db1.Get(resultCard, query, card.ID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found card"))
 		}
@@ -1767,11 +1738,6 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 			CreatedAt: v.CreatedAt,
 			UpdatedAt: requestAt,
 		})
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	return successResponse(c, &AddExpToCardResponse{
@@ -1873,16 +1839,9 @@ func (h *Handler) updateDeck(c echo.Context) error {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid card ids"))
 	}
 
-	tx, err := db1.Beginx()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	defer tx.Rollback() //nolint:errcheck
-
 	// update data
 	query = "UPDATE user_decks SET updated_at=?, deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-	if _, err = tx.Exec(query, requestAt, requestAt, userID); err != nil {
+	if _, err = db1.Exec(query, requestAt, requestAt, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1900,12 +1859,7 @@ func (h *Handler) updateDeck(c echo.Context) error {
 		UpdatedAt: requestAt,
 	}
 	query = "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err := tx.Exec(query, newDeck.ID, newDeck.UserID, newDeck.CardID1, newDeck.CardID2, newDeck.CardID3, newDeck.CreatedAt, newDeck.UpdatedAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	err = tx.Commit()
-	if err != nil {
+	if _, err := db1.Exec(query, newDeck.ID, newDeck.UserID, newDeck.CardID1, newDeck.CardID2, newDeck.CardID3, newDeck.CreatedAt, newDeck.UpdatedAt); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
