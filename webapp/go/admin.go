@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/sync/errgroup"
 )
 
 // //////////////////////////////////////
@@ -276,13 +278,22 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			})
 		}
 
-		query := "INSERT INTO version_masters(id, status, master_version) VALUES (:id, :status, :master_version) ON DUPLICATE KEY UPDATE status=VALUES(status), master_version=VALUES(master_version)"
-		if _, err = tx1.NamedExec(query, data); err != nil {
+		f := func(tx *sqlx.Tx) error {
+			query := "INSERT INTO version_masters(id, status, master_version) VALUES (:id, :status, :master_version) ON DUPLICATE KEY UPDATE status=VALUES(status), master_version=VALUES(master_version)"
+			if _, err = tx.NamedExec(query, data); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		var eg errgroup.Group
+		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx3) })
+		err := eg.Wait()
+		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
-		if _, err = tx3.NamedExec(query, data); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
+
 	} else {
 		c.Logger().Debug("Skip Update Master: versionMaster")
 	}
@@ -314,17 +325,26 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			})
 		}
 
-		query := strings.Join([]string{
-			"INSERT INTO item_masters(id, item_type, name, description, amount_per_sec, max_level, max_amount_per_sec, base_exp_per_level, gained_exp, shortening_min)",
-			"VALUES (:id, :item_type, :name, :description, :amount_per_sec, :max_level, :max_amount_per_sec, :base_exp_per_level, :gained_exp, :shortening_min)",
-			"ON DUPLICATE KEY UPDATE item_type=VALUES(item_type), name=VALUES(name), description=VALUES(description), amount_per_sec=VALUES(amount_per_sec), max_level=VALUES(max_level), max_amount_per_sec=VALUES(max_amount_per_sec), base_exp_per_level=VALUES(base_exp_per_level), gained_exp=VALUES(gained_exp), shortening_min=VALUES(shortening_min)",
-		}, " ")
-		if _, err = tx1.NamedExec(query, data); err != nil {
+		f := func(tx *sqlx.Tx) error {
+			query := strings.Join([]string{
+				"INSERT INTO item_masters(id, item_type, name, description, amount_per_sec, max_level, max_amount_per_sec, base_exp_per_level, gained_exp, shortening_min)",
+				"VALUES (:id, :item_type, :name, :description, :amount_per_sec, :max_level, :max_amount_per_sec, :base_exp_per_level, :gained_exp, :shortening_min)",
+				"ON DUPLICATE KEY UPDATE item_type=VALUES(item_type), name=VALUES(name), description=VALUES(description), amount_per_sec=VALUES(amount_per_sec), max_level=VALUES(max_level), max_amount_per_sec=VALUES(max_amount_per_sec), base_exp_per_level=VALUES(base_exp_per_level), gained_exp=VALUES(gained_exp), shortening_min=VALUES(shortening_min)",
+			}, " ")
+			if _, err = tx.NamedExec(query, data); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		var eg errgroup.Group
+		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx3) })
+		err := eg.Wait()
+		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
-		if _, err = tx3.NamedExec(query, data); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
+
 	} else {
 		c.Logger().Debug("Skip Update Master: itemMaster")
 	}
@@ -352,15 +372,22 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			})
 		}
 
-		query := strings.Join([]string{
-			"INSERT INTO gacha_masters(id, name, start_at, end_at, display_order, created_at)",
-			"VALUES (:id, :name, :start_at, :end_at, :display_order, :created_at)",
-			"ON DUPLICATE KEY UPDATE name=VALUES(name), start_at=VALUES(start_at), end_at=VALUES(end_at), display_order=VALUES(display_order), created_at=VALUES(created_at)",
-		}, " ")
-		if _, err = tx1.NamedExec(query, data); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
+		f := func(tx *sqlx.Tx) error {
+			query := strings.Join([]string{
+				"INSERT INTO gacha_masters(id, name, start_at, end_at, display_order, created_at)",
+				"VALUES (:id, :name, :start_at, :end_at, :display_order, :created_at)",
+				"ON DUPLICATE KEY UPDATE name=VALUES(name), start_at=VALUES(start_at), end_at=VALUES(end_at), display_order=VALUES(display_order), created_at=VALUES(created_at)",
+			}, " ")
+			if _, err = tx1.NamedExec(query, data); err != nil {
+				return err
+			}
+			return nil
 		}
-		if _, err = tx3.NamedExec(query, data); err != nil {
+		var eg errgroup.Group
+		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx3) })
+		err := eg.Wait()
+		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -391,15 +418,22 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			})
 		}
 
-		query := strings.Join([]string{
-			"INSERT INTO gacha_item_masters(id, gacha_id, item_type, item_id, amount, weight, created_at)",
-			"VALUES (:id, :gacha_id, :item_type, :item_id, :amount, :weight, :created_at)",
-			"ON DUPLICATE KEY UPDATE gacha_id=VALUES(gacha_id), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), weight=VALUES(weight), created_at=VALUES(created_at)",
-		}, " ")
-		if _, err = tx1.NamedExec(query, data); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
+		f := func(tx *sqlx.Tx) error {
+			query := strings.Join([]string{
+				"INSERT INTO gacha_item_masters(id, gacha_id, item_type, item_id, amount, weight, created_at)",
+				"VALUES (:id, :gacha_id, :item_type, :item_id, :amount, :weight, :created_at)",
+				"ON DUPLICATE KEY UPDATE gacha_id=VALUES(gacha_id), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), weight=VALUES(weight), created_at=VALUES(created_at)",
+			}, " ")
+			if _, err = tx.NamedExec(query, data); err != nil {
+				return err
+			}
+			return nil
 		}
-		if _, err = tx3.NamedExec(query, data); err != nil {
+		var eg errgroup.Group
+		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx3) })
+		err := eg.Wait()
+		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -431,15 +465,22 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			})
 		}
 
-		query := strings.Join([]string{
-			"INSERT INTO present_all_masters(id, registered_start_at, registered_end_at, item_type, item_id, amount, present_message, created_at)",
-			"VALUES (:id, :registered_start_at, :registered_end_at, :item_type, :item_id, :amount, :present_message, :created_at)",
-			"ON DUPLICATE KEY UPDATE registered_start_at=VALUES(registered_start_at), registered_end_at=VALUES(registered_end_at), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), present_message=VALUES(present_message), created_at=VALUES(created_at)",
-		}, " ")
-		if _, err = tx2.NamedExec(query, data); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
+		f := func(tx *sqlx.Tx) error {
+			query := strings.Join([]string{
+				"INSERT INTO present_all_masters(id, registered_start_at, registered_end_at, item_type, item_id, amount, present_message, created_at)",
+				"VALUES (:id, :registered_start_at, :registered_end_at, :item_type, :item_id, :amount, :present_message, :created_at)",
+				"ON DUPLICATE KEY UPDATE registered_start_at=VALUES(registered_start_at), registered_end_at=VALUES(registered_end_at), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), present_message=VALUES(present_message), created_at=VALUES(created_at)",
+			}, " ")
+			if _, err = tx.NamedExec(query, data); err != nil {
+				return err
+			}
+			return nil
 		}
-		if _, err = tx4.NamedExec(query, data); err != nil {
+		var eg errgroup.Group
+		eg.Go(func() error { return f(tx2) })
+		eg.Go(func() error { return f(tx4) })
+		err := eg.Wait()
+		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -473,15 +514,22 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			})
 		}
 
-		query := strings.Join([]string{
-			"INSERT INTO login_bonus_masters(id, start_at, end_at, column_count, looped, created_at)",
-			"VALUES (:id, :start_at, :end_at, :column_count, :looped, :created_at)",
-			"ON DUPLICATE KEY UPDATE start_at=VALUES(start_at), end_at=VALUES(end_at), column_count=VALUES(column_count), looped=VALUES(looped), created_at=VALUES(created_at)",
-		}, " ")
-		if _, err = tx1.NamedExec(query, data); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
+		f := func(tx *sqlx.Tx) error {
+			query := strings.Join([]string{
+				"INSERT INTO login_bonus_masters(id, start_at, end_at, column_count, looped, created_at)",
+				"VALUES (:id, :start_at, :end_at, :column_count, :looped, :created_at)",
+				"ON DUPLICATE KEY UPDATE start_at=VALUES(start_at), end_at=VALUES(end_at), column_count=VALUES(column_count), looped=VALUES(looped), created_at=VALUES(created_at)",
+			}, " ")
+			if _, err = tx.NamedExec(query, data); err != nil {
+				return err
+			}
+			return nil
 		}
-		if _, err = tx3.NamedExec(query, data); err != nil {
+		var eg errgroup.Group
+		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx3) })
+		err := eg.Wait()
+		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -512,15 +560,22 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			})
 		}
 
-		query := strings.Join([]string{
-			"INSERT INTO login_bonus_reward_masters(id, login_bonus_id, reward_sequence, item_type, item_id, amount, created_at)",
-			"VALUES (:id, :login_bonus_id, :reward_sequence, :item_type, :item_id, :amount, :created_at)",
-			"ON DUPLICATE KEY UPDATE login_bonus_id=VALUES(login_bonus_id), reward_sequence=VALUES(reward_sequence), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), created_at=VALUES(created_at)",
-		}, " ")
-		if _, err = tx1.NamedExec(query, data); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
+		f := func(tx *sqlx.Tx) error {
+			query := strings.Join([]string{
+				"INSERT INTO login_bonus_reward_masters(id, login_bonus_id, reward_sequence, item_type, item_id, amount, created_at)",
+				"VALUES (:id, :login_bonus_id, :reward_sequence, :item_type, :item_id, :amount, :created_at)",
+				"ON DUPLICATE KEY UPDATE login_bonus_id=VALUES(login_bonus_id), reward_sequence=VALUES(reward_sequence), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), created_at=VALUES(created_at)",
+			}, " ")
+			if _, err = tx1.NamedExec(query, data); err != nil {
+				return err
+			}
+			return nil
 		}
-		if _, err = tx3.NamedExec(query, data); err != nil {
+		var eg errgroup.Group
+		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx3) })
+		err := eg.Wait()
+		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -535,22 +590,12 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	err = tx1.Commit()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	err = tx2.Commit()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	err = tx3.Commit()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	err = tx4.Commit()
+	var eg errgroup.Group
+	eg.Go(func() error { return tx1.Commit() })
+	eg.Go(func() error { return tx2.Commit() })
+	eg.Go(func() error { return tx3.Commit() })
+	eg.Go(func() error { return tx4.Commit() })
+	err = eg.Wait()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
