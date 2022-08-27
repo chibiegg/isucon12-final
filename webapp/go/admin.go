@@ -181,7 +181,7 @@ func (h *Handler) adminListMaster(c echo.Context) error {
 	}
 
 	presentAlls := make([]*PresentAllMaster, 0)
-	if err := h.DB.Select(&presentAlls, "SELECT * FROM present_all_masters"); err != nil {
+	if err := h.DB2.Select(&presentAlls, "SELECT * FROM present_all_masters"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 
 	}
@@ -226,6 +226,12 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	tx2, err := h.DB.Beginx()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	defer tx2.Rollback() //nolint:errcheck
 
 	// version master
 	versionMasterRecs, err := readFormFileToCSV(c, "versionMaster")
@@ -395,7 +401,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			"VALUES (:id, :registered_start_at, :registered_end_at, :item_type, :item_id, :amount, :present_message, :created_at)",
 			"ON DUPLICATE KEY UPDATE registered_start_at=VALUES(registered_start_at), registered_end_at=VALUES(registered_end_at), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), present_message=VALUES(present_message), created_at=VALUES(created_at)",
 		}, " ")
-		if _, err = tx.NamedExec(query, data); err != nil {
+		if _, err = tx2.NamedExec(query, data); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -487,6 +493,11 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
+	err = tx2.Commit()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
 	return successResponse(c, &AdminUpdateMasterResponse{
 		VersionMaster: activeMaster,
 	})
@@ -572,13 +583,13 @@ func (h *Handler) adminUser(c echo.Context) error {
 
 	query = "SELECT * FROM user_presents WHERE user_id=?"
 	presents := make([]*UserPresent, 0)
-	if err = h.DB.Select(&presents, query, userID); err != nil {
+	if err = h.DB2.Select(&presents, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_present_all_received_history WHERE user_id=?"
 	presentHistory := make([]*UserPresentAllReceivedHistory, 0)
-	if err = h.DB.Select(&presentHistory, query, userID); err != nil {
+	if err = h.DB2.Select(&presentHistory, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
