@@ -945,7 +945,7 @@ func (h *Handler) login(c echo.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	tx2, err := h.DB.Beginx()
+	tx2, err := h.DB2.Beginx()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1239,7 +1239,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	tx2, err := h.DB.Beginx()
+	tx2, err := h.DB2.Beginx()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1403,7 +1403,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	tx2, err := h.DB.Beginx()
+	tx2, err := h.DB2.Beginx()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
