@@ -288,7 +288,9 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 
 		var eg errgroup.Group
 		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx2) })
 		eg.Go(func() error { return f(tx3) })
+		eg.Go(func() error { return f(tx4) })
 		err := eg.Wait()
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
@@ -339,7 +341,9 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 
 		var eg errgroup.Group
 		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx2) })
 		eg.Go(func() error { return f(tx3) })
+		eg.Go(func() error { return f(tx4) })
 		err := eg.Wait()
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
@@ -385,7 +389,9 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		}
 		var eg errgroup.Group
 		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx2) })
 		eg.Go(func() error { return f(tx3) })
+		eg.Go(func() error { return f(tx4) })
 		err := eg.Wait()
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
@@ -432,7 +438,9 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		clearGachaItemMasterMap()
 		var eg errgroup.Group
 		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx2) })
 		eg.Go(func() error { return f(tx3) })
+		eg.Go(func() error { return f(tx4) })
 		err := eg.Wait()
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
@@ -478,7 +486,9 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			return nil
 		}
 		var eg errgroup.Group
+		eg.Go(func() error { return f(tx1) })
 		eg.Go(func() error { return f(tx2) })
+		eg.Go(func() error { return f(tx3) })
 		eg.Go(func() error { return f(tx4) })
 		err := eg.Wait()
 		if err != nil {
@@ -528,7 +538,9 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		}
 		var eg errgroup.Group
 		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx2) })
 		eg.Go(func() error { return f(tx3) })
+		eg.Go(func() error { return f(tx4) })
 		err := eg.Wait()
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
@@ -574,7 +586,9 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		}
 		var eg errgroup.Group
 		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error { return f(tx2) })
 		eg.Go(func() error { return f(tx3) })
+		eg.Go(func() error { return f(tx4) })
 		err := eg.Wait()
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
