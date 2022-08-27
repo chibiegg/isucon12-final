@@ -430,7 +430,13 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			return nil
 		}
 		var eg errgroup.Group
-		eg.Go(func() error { return f(tx1) })
+		eg.Go(func() error {
+			err := f(tx1)
+			if err != nil {
+				return err
+			}
+			loadGachaItemMaster(tx1)
+		})
 		eg.Go(func() error { return f(tx3) })
 		err := eg.Wait()
 		if err != nil {
