@@ -22,4 +22,7 @@ webapp/php
 webapp/ruby
 webapp/rust
 webapp/sql/setup/2_init.sql
+.lesshst
+.wget-hsts
+.gitconfig
 
