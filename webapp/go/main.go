@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/rand"
 	"net/http"
@@ -20,6 +21,10 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
+
+	_ "net/http/pprof"
+
+	"github.com/felixge/fgprof"
 )
 
 var (
@@ -73,6 +78,11 @@ func initializeLocalCache(dbx *sqlx.DB) error {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
+
+	http.DefaultServeMux.Handle("/debug/fgprof", fgprof.Handler())
+	go func() {
+		log.Println(http.ListenAndServe(":6060", nil))
+	}()
 
 	e := echo.New()
 	e.Use(middleware.Logger())
