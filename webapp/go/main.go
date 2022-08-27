@@ -377,8 +377,6 @@ func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc
 
 // checkOneTimeToken
 func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, requestAt int64) error {
-	tk := new(UserOneTimeToken)
-
 	db1, _ := h.getDatabaseForUserID(userID)
 
 	// oneTimeTokenMutex.RLock()
@@ -402,6 +400,7 @@ func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, r
 		oneTimeTokenMutex.Unlock()
 		return ErrInvalidToken
 	}
+	tk := oneTimeTokenMap[userID]
 	delete(oneTimeTokenMap, userID)
 	oneTimeTokenMutex.Unlock()
 	go func() {
