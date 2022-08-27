@@ -257,8 +257,8 @@ func (h *Handler) getDatabaseForUserID(userId int64) (*sqlx.DB, *sqlx.DB) {
 
 func (h *Handler) getSessionDatabase(sessionId string) *sqlx.DB {
 	c := byte(0x00)
-	if token != "" {
-		c = token[0]
+	if sessionId != "" {
+		c = sessionId[0]
 	}
 
 	m := c % 4
