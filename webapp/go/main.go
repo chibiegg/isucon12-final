@@ -47,8 +47,16 @@ const (
 )
 
 type Handler struct {
-	DB *sqlx.DB
+	DB  *sqlx.DB
+	DB2 *sqlx.DB
 }
+
+/*
+
+DB2のテーブル
+- user_devices
+
+*/
 
 func initializeLocalCache(dbx *sqlx.DB) error {
 	res, err := dbx.Exec("UPDATE id_generator2 SET id=LAST_INSERT_ID(id+100000000000)")
@@ -82,6 +90,13 @@ func main() {
 	}
 	defer dbx.Close()
 
+	// connect db2
+	dbx2, err := connectDB2(false)
+	if err != nil {
+		e.Logger.Fatalf("failed to connect to db2: %v", err)
+	}
+	defer dbx2.Close()
+
 	err = initializeLocalCache(dbx)
 	if err != nil {
 		e.Logger.Fatalf("failed to init local cache: %v", err)
@@ -90,7 +105,8 @@ func main() {
 	// setting server
 	e.Server.Addr = fmt.Sprintf(":%v", "8080")
 	h := &Handler{
-		DB: dbx,
+		DB:  dbx,
+		DB2: dbx2,
 	}
 
 	// e.Use(middleware.CORS())
@@ -135,6 +151,24 @@ func connectDB(batch bool) (*sqlx.DB, error) {
 		getEnv("ISUCON_DB_USER", "isucon"),
 		getEnv("ISUCON_DB_PASSWORD", "isucon"),
 		getEnv("ISUCON_DB_HOST", "127.0.0.1"),
+		getEnv("ISUCON_DB_PORT", "3306"),
+		getEnv("ISUCON_DB_NAME", "isucon"),
+		"Asia%2FTokyo",
+		batch,
+	)
+	dbx, err := sqlx.Open("mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+	return dbx, nil
+}
+
+func connectDB2(batch bool) (*sqlx.DB, error) {
+	dsn := fmt.Sprintf(
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t",
+		getEnv("ISUCON_DB_USER", "isucon"),
+		getEnv("ISUCON_DB_PASSWORD", "isucon"),
+		getEnv("ISUCON_DB_HOST2", "127.0.0.1"),
 		getEnv("ISUCON_DB_PORT", "3306"),
 		getEnv("ISUCON_DB_NAME", "isucon"),
 		"Asia%2FTokyo",
@@ -283,7 +317,7 @@ func (h *Handler) checkOneTimeToken(token string, tokenType int, requestAt int64
 func (h *Handler) checkViewerID(userID int64, viewerID string) error {
 	query := "SELECT * FROM user_devices WHERE user_id=? AND platform_id=?"
 	device := new(UserDevice)
-	if err := h.DB.Get(device, query, userID, viewerID); err != nil {
+	if err := h.DB2.Get(device, query, userID, viewerID); err != nil {
 		if err == sql.ErrNoRows {
 			return ErrUserDeviceNotFound
 		}
@@ -688,6 +722,12 @@ func (h *Handler) createUser(c echo.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	tx2, err := h.DB2.Beginx()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	defer tx2.Rollback() //nolint:errcheck
+
 	// ユーザ作成
 	uID, err := h.generateID()
 	if err != nil {
@@ -720,7 +760,7 @@ func (h *Handler) createUser(c echo.Context) error {
 		UpdatedAt:    requestAt,
 	}
 	query = "INSERT INTO user_devices(id, user_id, platform_id, platform_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-	_, err = tx.Exec(query, userDevice.ID, user.ID, req.ViewerID, req.PlatformType, requestAt, requestAt)
+	_, err = tx2.Exec(query, userDevice.ID, user.ID, req.ViewerID, req.PlatformType, requestAt, requestAt)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -811,6 +851,10 @@ func (h *Handler) createUser(c echo.Context) error {
 	}
 
 	err = tx.Commit()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	err = tx2.Commit()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
