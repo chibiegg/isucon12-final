@@ -20,9 +20,11 @@ func (h *Handler) adminSessionCheckMiddleware(next echo.HandlerFunc) echo.Handle
 	return func(c echo.Context) error {
 		sessID := c.Request().Header.Get("x-session")
 
+		masterDatabase := h.getMasterDatabase()
+
 		adminSession := new(Session)
 		query := "SELECT * FROM admin_sessions WHERE session_id=? AND deleted_at IS NULL"
-		if err := h.DB.Get(adminSession, query, sessID); err != nil {
+		if err := masterDatabase.Get(adminSession, query, sessID); err != nil {
 			if err == sql.ErrNoRows {
 				return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 			}
@@ -36,7 +38,7 @@ func (h *Handler) adminSessionCheckMiddleware(next echo.HandlerFunc) echo.Handle
 
 		if adminSession.ExpiredAt < requestAt {
 			query = "UPDATE admin_sessions SET deleted_at=? WHERE session_id=?"
-			if _, err = h.DB.Exec(query, requestAt, sessID); err != nil {
+			if _, err = masterDatabase.Exec(query, requestAt, sessID); err != nil {
 				return errorResponse(c, http.StatusInternalServerError, err)
 			}
 			return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
@@ -65,7 +67,9 @@ func (h *Handler) adminLogin(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	tx, err := h.DB.Beginx()
+	masterDatabase := h.getMasterDatabase()
+
+	tx, err := masterDatabase.Beginx()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -144,13 +148,15 @@ type AdminLoginResponse struct {
 func (h *Handler) adminLogout(c echo.Context) error {
 	sessID := c.Request().Header.Get("x-session")
 
+	masterDatabase := h.getMasterDatabase()
+
 	requestAt, err := getRequestTime(c)
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 	// すでにあるsessionをdeleteにする
 	query := "UPDATE admin_sessions SET deleted_at=? WHERE session_id=? AND deleted_at IS NULL"
-	if _, err = h.DB.Exec(query, requestAt, sessID); err != nil {
+	if _, err = masterDatabase.Exec(query, requestAt, sessID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -160,40 +166,44 @@ func (h *Handler) adminLogout(c echo.Context) error {
 // adminListMaster マスタデータ閲覧
 // GET /admin/master
 func (h *Handler) adminListMaster(c echo.Context) error {
+
+	masterDatabase := h.getMasterDatabase()
+	db1, db2 := h.getDatabaseForUserID(0)
+
 	masterVersions := make([]*VersionMaster, 0)
-	if err := h.DB.Select(&masterVersions, "SELECT * FROM version_masters"); err != nil {
+	if err := masterDatabase.Select(&masterVersions, "SELECT * FROM version_masters"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	items := make([]*ItemMaster, 0)
-	if err := h.DB.Select(&items, "SELECT * FROM item_masters"); err != nil {
+	if err := db1.Select(&items, "SELECT * FROM item_masters"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	gachas := make([]*GachaMaster, 0)
-	if err := h.DB.Select(&gachas, "SELECT * FROM gacha_masters"); err != nil {
+	if err := masterDatabase.Select(&gachas, "SELECT * FROM gacha_masters"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	gachaItems := make([]*GachaItemMaster, 0)
-	if err := h.DB.Select(&gachaItems, "SELECT * FROM gacha_item_masters"); err != nil {
+	if err := masterDatabase.Select(&gachaItems, "SELECT * FROM gacha_item_masters"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	presentAlls := make([]*PresentAllMaster, 0)
-	if err := h.DB2.Select(&presentAlls, "SELECT * FROM present_all_masters"); err != nil {
+	if err := db2.Select(&presentAlls, "SELECT * FROM present_all_masters"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 
 	}
 
 	loginBonuses := make([]*LoginBonusMaster, 0)
-	if err := h.DB.Select(&loginBonuses, "SELECT * FROM login_bonus_masters"); err != nil {
+	if err := db1.Select(&loginBonuses, "SELECT * FROM login_bonus_masters"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 
 	}
 
 	loginBonusRewards := make([]*LoginBonusRewardMaster, 0)
-	if err := h.DB.Select(&loginBonusRewards, "SELECT * FROM login_bonus_reward_masters"); err != nil {
+	if err := db1.Select(&loginBonusRewards, "SELECT * FROM login_bonus_reward_masters"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -221,17 +231,30 @@ type AdminListMasterResponse struct {
 // adminUpdateMaster マスタデータ更新
 // PUT /admin/master
 func (h *Handler) adminUpdateMaster(c echo.Context) error {
-	tx, err := h.DB.Beginx()
+
+	tx1, err := h.DB1.Beginx()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx1.Rollback() //nolint:errcheck
 
-	tx2, err := h.DB.Beginx()
+	tx2, err := h.DB2.Beginx()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 	defer tx2.Rollback() //nolint:errcheck
+
+	tx3, err := h.DB3.Beginx()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	defer tx3.Rollback() //nolint:errcheck
+
+	tx4, err := h.DB4.Beginx()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	defer tx4.Rollback() //nolint:errcheck
 
 	// version master
 	versionMasterRecs, err := readFormFileToCSV(c, "versionMaster")
@@ -254,7 +277,10 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		}
 
 		query := "INSERT INTO version_masters(id, status, master_version) VALUES (:id, :status, :master_version) ON DUPLICATE KEY UPDATE status=VALUES(status), master_version=VALUES(master_version)"
-		if _, err = tx.NamedExec(query, data); err != nil {
+		if _, err = tx1.NamedExec(query, data); err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+		if _, err = tx3.NamedExec(query, data); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -293,7 +319,10 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			"VALUES (:id, :item_type, :name, :description, :amount_per_sec, :max_level, :max_amount_per_sec, :base_exp_per_level, :gained_exp, :shortening_min)",
 			"ON DUPLICATE KEY UPDATE item_type=VALUES(item_type), name=VALUES(name), description=VALUES(description), amount_per_sec=VALUES(amount_per_sec), max_level=VALUES(max_level), max_amount_per_sec=VALUES(max_amount_per_sec), base_exp_per_level=VALUES(base_exp_per_level), gained_exp=VALUES(gained_exp), shortening_min=VALUES(shortening_min)",
 		}, " ")
-		if _, err = tx.NamedExec(query, data); err != nil {
+		if _, err = tx1.NamedExec(query, data); err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+		if _, err = tx3.NamedExec(query, data); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -328,7 +357,10 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			"VALUES (:id, :name, :start_at, :end_at, :display_order, :created_at)",
 			"ON DUPLICATE KEY UPDATE name=VALUES(name), start_at=VALUES(start_at), end_at=VALUES(end_at), display_order=VALUES(display_order), created_at=VALUES(created_at)",
 		}, " ")
-		if _, err = tx.NamedExec(query, data); err != nil {
+		if _, err = tx1.NamedExec(query, data); err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+		if _, err = tx3.NamedExec(query, data); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -364,7 +396,10 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			"VALUES (:id, :gacha_id, :item_type, :item_id, :amount, :weight, :created_at)",
 			"ON DUPLICATE KEY UPDATE gacha_id=VALUES(gacha_id), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), weight=VALUES(weight), created_at=VALUES(created_at)",
 		}, " ")
-		if _, err = tx.NamedExec(query, data); err != nil {
+		if _, err = tx1.NamedExec(query, data); err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+		if _, err = tx3.NamedExec(query, data); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -404,6 +439,9 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		if _, err = tx2.NamedExec(query, data); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
+		if _, err = tx4.NamedExec(query, data); err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
 	} else {
 		c.Logger().Debug("Skip Update Master: presentAllMaster")
 	}
@@ -440,7 +478,10 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			"VALUES (:id, :start_at, :end_at, :column_count, :looped, :created_at)",
 			"ON DUPLICATE KEY UPDATE start_at=VALUES(start_at), end_at=VALUES(end_at), column_count=VALUES(column_count), looped=VALUES(looped), created_at=VALUES(created_at)",
 		}, " ")
-		if _, err = tx.NamedExec(query, data); err != nil {
+		if _, err = tx1.NamedExec(query, data); err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+		if _, err = tx3.NamedExec(query, data); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -476,7 +517,10 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			"VALUES (:id, :login_bonus_id, :reward_sequence, :item_type, :item_id, :amount, :created_at)",
 			"ON DUPLICATE KEY UPDATE login_bonus_id=VALUES(login_bonus_id), reward_sequence=VALUES(reward_sequence), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), created_at=VALUES(created_at)",
 		}, " ")
-		if _, err = tx.NamedExec(query, data); err != nil {
+		if _, err = tx1.NamedExec(query, data); err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+		if _, err = tx3.NamedExec(query, data); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	} else {
@@ -484,16 +528,29 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 	}
 
 	activeMaster := new(VersionMaster)
-	if err = tx.Get(activeMaster, "SELECT * FROM version_masters WHERE status=1"); err != nil {
+	if err = tx1.Get(activeMaster, "SELECT * FROM version_masters WHERE status=1"); err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	if err = tx3.Get(activeMaster, "SELECT * FROM version_masters WHERE status=1"); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	err = tx.Commit()
+	err = tx1.Commit()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	err = tx2.Commit()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	err = tx3.Commit()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	err = tx4.Commit()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -542,9 +599,11 @@ func (h *Handler) adminUser(c echo.Context) error {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
 
+	db1, db2 := h.getDatabaseForUserID(userID)
+
 	query := "SELECT * FROM users WHERE id=?"
 	user := new(User)
-	if err = h.DB.Get(user, query, userID); err != nil {
+	if err = db1.Get(user, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
 		}
@@ -553,43 +612,43 @@ func (h *Handler) adminUser(c echo.Context) error {
 
 	query = "SELECT * FROM user_devices WHERE user_id=?"
 	devices := make([]*UserDevice, 0)
-	if err = h.DB.Select(&devices, query, userID); err != nil {
+	if err = db2.Select(&devices, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_cards WHERE user_id=?"
 	cards := make([]*UserCard, 0)
-	if err = h.DB.Select(&cards, query, userID); err != nil {
+	if err = db1.Select(&cards, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_decks WHERE user_id=?"
 	decks := make([]*UserDeck, 0)
-	if err = h.DB.Select(&decks, query, userID); err != nil {
+	if err = db1.Select(&decks, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_items WHERE user_id=?"
 	items := make([]*UserItem, 0)
-	if err = h.DB.Select(&items, query, userID); err != nil {
+	if err = db1.Select(&items, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_login_bonuses WHERE user_id=?"
 	loginBonuses := make([]*UserLoginBonus, 0)
-	if err = h.DB.Select(&loginBonuses, query, userID); err != nil {
+	if err = db1.Select(&loginBonuses, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_presents WHERE user_id=?"
 	presents := make([]*UserPresent, 0)
-	if err = h.DB2.Select(&presents, query, userID); err != nil {
+	if err = db2.Select(&presents, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	query = "SELECT * FROM user_present_all_received_history WHERE user_id=?"
 	presentHistory := make([]*UserPresentAllReceivedHistory, 0)
-	if err = h.DB2.Select(&presentHistory, query, userID); err != nil {
+	if err = db2.Select(&presentHistory, query, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -630,9 +689,11 @@ func (h *Handler) adminBanUser(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
+	db1, _ := h.getDatabaseForUserID(userID)
+
 	query := "SELECT * FROM users WHERE id=?"
 	user := new(User)
-	if err = h.DB.Get(user, query, userID); err != nil {
+	if err = db1.Get(user, query, userID); err != nil {
 		if err == sql.ErrNoRows {
 			return errorResponse(c, http.StatusBadRequest, ErrUserNotFound)
 		}
@@ -644,7 +705,7 @@ func (h *Handler) adminBanUser(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 	query = "INSERT user_bans(id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE updated_at = ?"
-	if _, err = h.DB.Exec(query, banID, userID, requestAt, requestAt, requestAt); err != nil {
+	if _, err = db1.Exec(query, banID, userID, requestAt, requestAt, requestAt); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
