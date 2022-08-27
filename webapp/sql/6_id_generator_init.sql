@@ -1,1 +1,2 @@
 UPDATE id_generator SET id=100000000001;
+UPDATE id_generator2 SET id=100000000001;

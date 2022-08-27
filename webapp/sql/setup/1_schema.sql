@@ -21,6 +21,7 @@ DROP TABLE IF EXISTS `item_masters`;
 DROP TABLE IF EXISTS `version_masters`;
 DROP TABLE IF EXISTS `admin_users`;
 DROP TABLE IF EXISTS `id_generator`;
+DROP TABLE IF EXISTS `id_generator_2`;
 
 CREATE TABLE `users` (
   `id` bigint NOT NULL,
@@ -276,6 +277,11 @@ CREATE TABLE `admin_users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE TABLE `id_generator` (
+  `id` bigint NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `id_generator2` (
   `id` bigint NOT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
