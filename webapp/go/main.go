@@ -282,10 +282,12 @@ func (h *Handler) apiMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		}
 		c.Set("requestTime", requestAt.Unix())
 
+		masterDB := h.getMasterDatabase()
+
 		// マスタ確認
 		query := "SELECT * FROM version_masters WHERE status=1"
 		masterVersion := new(VersionMaster)
-		if err := h.getMasterDatabase().Get(masterVersion, query); err != nil {
+		if err := masterDB.Get(masterVersion, query); err != nil {
 			if err == sql.ErrNoRows {
 				return errorResponse(c, http.StatusNotFound, fmt.Errorf("active master version is not found"))
 			}
