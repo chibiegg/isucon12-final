@@ -369,12 +369,13 @@ func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc
 }
 
 // checkOneTimeToken
-func (h *Handler) checkOneTimeToken(token string, tokenType int, requestAt int64) error {
+func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, requestAt int64) error {
 	tk := new(UserOneTimeToken)
-	db := h.getMasterDatabase()
+
+	db1, _ := h.getDatabaseForUserID(userID)
 
 	query := "SELECT * FROM user_one_time_tokens WHERE token=? AND token_type=? AND deleted_at IS NULL"
-	if err := db.Get(tk, query, token, tokenType); err != nil {
+	if err := db1.Get(tk, query, token, tokenType); err != nil {
 		if err == sql.ErrNoRows {
 			return ErrInvalidToken
 		}
@@ -383,7 +384,7 @@ func (h *Handler) checkOneTimeToken(token string, tokenType int, requestAt int64
 
 	if tk.ExpiredAt < requestAt {
 		query = "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
-		if _, err := db.Exec(query, requestAt, token); err != nil {
+		if _, err := db1.Exec(query, requestAt, token); err != nil {
 			return err
 		}
 		return ErrInvalidToken
@@ -391,7 +392,7 @@ func (h *Handler) checkOneTimeToken(token string, tokenType int, requestAt int64
 
 	// 使ったトークンを失効する
 	query = "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
-	if _, err := db.Exec(query, requestAt, token); err != nil {
+	if _, err := db1.Exec(query, requestAt, token); err != nil {
 		return err
 	}
 
@@ -1140,6 +1141,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 	}
 
 	masterDB := h.getMasterDatabase()
+	db1, _ := h.getDatabaseForUserID(userID)
 
 	gachaMasterList := []*GachaMaster{}
 	query := "SELECT * FROM gacha_masters WHERE start_at <= ? AND end_at >= ? ORDER BY display_order ASC"
@@ -1176,7 +1178,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 
 	// genearte one time token
 	query = "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-	if _, err = masterDB.Exec(query, requestAt, userID); err != nil {
+	if _, err = db1.Exec(query, requestAt, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 	tID, err := h.generateID()
@@ -1197,7 +1199,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 		ExpiredAt: requestAt + 600,
 	}
 	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err = masterDB.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt); err != nil {
+	if _, err = db1.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1249,7 +1251,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	if err = h.checkOneTimeToken(req.OneTimeToken, 1, requestAt); err != nil {
+	if err = h.checkOneTimeToken(req.OneTimeToken, userID, 1, requestAt); err != nil {
 		if err == ErrInvalidToken {
 			return errorResponse(c, http.StatusBadRequest, err)
 		}
@@ -1593,7 +1595,6 @@ func (h *Handler) listItem(c echo.Context) error {
 	}
 
 	db1, _ := h.getDatabaseForUserID(userID)
-	masterDB := h.getMasterDatabase()
 
 	user := new(User)
 	query := "SELECT * FROM users WHERE id=?"
@@ -1618,7 +1619,7 @@ func (h *Handler) listItem(c echo.Context) error {
 
 	// genearte one time token
 	query = "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-	if _, err = masterDB.Exec(query, requestAt, userID); err != nil {
+	if _, err = db1.Exec(query, requestAt, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 	tID, err := h.generateID()
@@ -1639,7 +1640,7 @@ func (h *Handler) listItem(c echo.Context) error {
 		ExpiredAt: requestAt + 600,
 	}
 	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err = masterDB.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt); err != nil {
+	if _, err = db1.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1683,7 +1684,7 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	if err = h.checkOneTimeToken(req.OneTimeToken, 2, requestAt); err != nil {
+	if err = h.checkOneTimeToken(req.OneTimeToken, userID, 2, requestAt); err != nil {
 		if err == ErrInvalidToken {
 			return errorResponse(c, http.StatusBadRequest, err)
 		}
