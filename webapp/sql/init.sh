@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -ex
 cd `dirname $0`
 
@@ -10,7 +10,7 @@ ISUCON_DB_PASSWORD=${ISUCON_DB_PASSWORD:-isucon}
 ISUCON_DB_NAME=${ISUCON_DB_NAME:-isucon}
 
 
-function init(){
+function init () {
 	CURRENT_HOST="$1"
 	mysql -u"$ISUCON_DB_USER" \
 			-p"$ISUCON_DB_PASSWORD" \
