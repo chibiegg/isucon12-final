@@ -113,14 +113,14 @@ func main() {
 	defer dbx2.Close()
 
 	// connect db3
-	dbx3, err := connectDB2(false)
+	dbx3, err := connectDB3(false)
 	if err != nil {
 		e.Logger.Fatalf("failed to connect to db2: %v", err)
 	}
 	defer dbx2.Close()
 
 	// connect db4
-	dbx4, err := connectDB2(false)
+	dbx4, err := connectDB4(false)
 	if err != nil {
 		e.Logger.Fatalf("failed to connect to db2: %v", err)
 	}
@@ -1408,6 +1408,8 @@ func (h *Handler) listPresent(c echo.Context) error {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid userID parameter"))
 	}
 
+	_, db2 := h.getDatabaseForUserID(userID)
+
 	offset := PresentCountPerPage * (n - 1)
 	presentList := []*UserPresent{}
 	query := `
@@ -1415,12 +1417,13 @@ func (h *Handler) listPresent(c echo.Context) error {
 	WHERE user_id = ? AND deleted_at IS NULL
 	ORDER BY created_at DESC, id
 	LIMIT ? OFFSET ?`
-	if err = h.DB2.Select(&presentList, query, userID, PresentCountPerPage, offset); err != nil {
+
+	if err = db2.Select(&presentList, query, userID, PresentCountPerPage, offset); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	var presentCount int
-	if err = h.DB2.Get(&presentCount, "SELECT COUNT(*) FROM user_presents WHERE user_id = ? AND deleted_at IS NULL", userID); err != nil {
+	if err = db2.Get(&presentCount, "SELECT COUNT(*) FROM user_presents WHERE user_id = ? AND deleted_at IS NULL", userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
