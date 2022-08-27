@@ -11,9 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync/atomic"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
@@ -49,6 +49,18 @@ type Handler struct {
 	DB *sqlx.DB
 }
 
+func initializeLocalCache(dbx *sqlx.DB) error {
+	res, err := dbx.Exec("UPDATE id_generator2 SET id=LAST_INSERT_ID(id+100000000000)")
+	if err != nil {
+		return err
+	}
+	idGenerator2, err = res.LastInsertId()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
@@ -68,6 +80,11 @@ func main() {
 		e.Logger.Fatalf("failed to connect to db: %v", err)
 	}
 	defer dbx.Close()
+
+	err = initializeLocalCache(dbx)
+	if err != nil {
+		e.Logger.Fatalf("failed to init local cache: %v", err)
+	}
 
 	// setting server
 	e.Server.Addr = fmt.Sprintf(":%v", "8080")
@@ -627,6 +644,12 @@ func initialize(c echo.Context) error {
 	out, err := exec.Command("/bin/sh", "-c", SQLDirectory+"init.sh").CombinedOutput()
 	if err != nil {
 		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	err = initializeLocalCache(dbx)
+	if err != nil {
+		c.Logger().Errorf("failed to init local cache: %v", err)
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1893,27 +1916,11 @@ func noContentResponse(c echo.Context, status int) error {
 	return c.NoContent(status)
 }
 
+var idGenerator2 int64
+
 // generateID uniqueなIDを生成する
 func (h *Handler) generateID() (int64, error) {
-	var updateErr error
-	for i := 0; i < 100; i++ {
-		res, err := h.DB.Exec("UPDATE id_generator SET id=LAST_INSERT_ID(id+1)")
-		if err != nil {
-			if merr, ok := err.(*mysql.MySQLError); ok && merr.Number == 1213 {
-				updateErr = err
-				continue
-			}
-			return 0, err
-		}
-
-		id, err := res.LastInsertId()
-		if err != nil {
-			return 0, err
-		}
-		return id, nil
-	}
-
-	return 0, fmt.Errorf("failed to generate id: %w", updateErr)
+	return atomic.AddInt64(&idGenerator2, 1), nil
 }
 
 // generateSessionID
