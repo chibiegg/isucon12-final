@@ -1414,6 +1414,32 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	defer tx2.Rollback() //nolint:errcheck
 
 	// 配布処理
+
+	// user_presents の一括更新
+
+	query = `
+	UPDATE user_presents SET deleted_at=:deleted_at, updated_at=:updated_at WHERE id IN (:id_list)
+	`
+	idList := make([]int64, 0, len(obtainPresent))
+	for _, p := range obtainPresent {
+		idList = append(idList, p.ID)
+	}
+	pmap := map[string]interface{}{
+		"id_list":    idList,
+		"deleted_at": requestAt,
+		"updated_at": requestAt,
+	}
+	// 最初にsqlx.Named
+	query, args, _ := sqlx.Named(query, pmap)
+	// 次にsqlx.In
+	query, args, _ = sqlx.In(query, args...)
+	query = tx2.Rebind(query)
+	// 実行
+	_, err = tx2.Exec(query, args...)
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
 	for i := range obtainPresent {
 		if obtainPresent[i].DeletedAt != nil {
 			return errorResponse(c, http.StatusInternalServerError, fmt.Errorf("received present"))
@@ -1422,11 +1448,6 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		obtainPresent[i].UpdatedAt = requestAt
 		obtainPresent[i].DeletedAt = &requestAt
 		v := obtainPresent[i]
-		query = "UPDATE user_presents SET deleted_at=?, updated_at=? WHERE id=?"
-		_, err := tx2.Exec(query, requestAt, requestAt, v.ID)
-		if err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
 
 		_, _, _, err = h.obtainItem(tx, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
 		if err != nil {
