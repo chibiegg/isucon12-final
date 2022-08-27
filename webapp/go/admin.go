@@ -435,7 +435,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			if err != nil {
 				return err
 			}
-			loadGachaItemMaster(tx1)
+			return loadGachaItemMaster(tx1)
 		})
 		eg.Go(func() error { return f(tx3) })
 		err := eg.Wait()
