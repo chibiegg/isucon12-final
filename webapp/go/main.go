@@ -1328,17 +1328,13 @@ func (h *Handler) listPresent(c echo.Context) error {
 	WHERE user_id = ? AND deleted_at IS NULL
 	ORDER BY created_at DESC, id
 	LIMIT ? OFFSET ?`
-	if err = h.DB2.Select(&presentList, query, userID, PresentCountPerPage, offset); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
-	var presentCount int
-	if err = h.DB2.Get(&presentCount, "SELECT COUNT(*) FROM user_presents WHERE user_id = ? AND deleted_at IS NULL", userID); err != nil {
+	if err = h.DB2.Select(&presentList, query, userID, PresentCountPerPage+1, offset); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	isNext := false
-	if presentCount > (offset + PresentCountPerPage) {
+	if len(presentList) > PresentCountPerPage {
+		presentList = presentList[0:PresentCountPerPage]
 		isNext = true
 	}
 
