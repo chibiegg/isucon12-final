@@ -1411,7 +1411,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx2.Rollback() //nolint:errcheck
 
 	// 配布処理
 	for i := range obtainPresent {
