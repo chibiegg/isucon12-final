@@ -60,6 +60,8 @@ type Handler struct {
 }
 
 var oneTimeTokenMap map[int64]UserOneTimeToken
+var disposedTokenMap map[string]UserOneTimeToken
+
 var oneTimeTokenMutex sync.RWMutex
 
 /*
@@ -380,8 +382,12 @@ func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, r
 	db1, _ := h.getDatabaseForUserID(userID)
 
 	oneTimeTokenMutex.Lock()
+	var ok bool
 	var tk UserOneTimeToken
-	if _, ok := oneTimeTokenMap[userID]; !ok {
+	if tk, ok = oneTimeTokenMap[userID]; !ok {
+		if _, disposed := disposedTokenMap[token]; disposed {
+			return ErrInvalidToken
+		}
 		tkp := new(UserOneTimeToken)
 		query := "SELECT * FROM user_one_time_tokens WHERE token=? AND token_type=? AND deleted_at IS NULL"
 		if err := db1.Get(tkp, query, token, tokenType); err != nil {
@@ -397,6 +403,7 @@ func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, r
 	}
 
 	// 使ったトークンを失効する
+	disposedTokenMap[token] = tk
 	delete(oneTimeTokenMap, userID)
 	oneTimeTokenMutex.Unlock()
 	go func() {
