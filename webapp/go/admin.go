@@ -378,7 +378,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 				"VALUES (:id, :name, :start_at, :end_at, :display_order, :created_at)",
 				"ON DUPLICATE KEY UPDATE name=VALUES(name), start_at=VALUES(start_at), end_at=VALUES(end_at), display_order=VALUES(display_order), created_at=VALUES(created_at)",
 			}, " ")
-			if _, err = tx1.NamedExec(query, data); err != nil {
+			if _, err = tx.NamedExec(query, data); err != nil {
 				return err
 			}
 			return nil
@@ -566,7 +566,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 				"VALUES (:id, :login_bonus_id, :reward_sequence, :item_type, :item_id, :amount, :created_at)",
 				"ON DUPLICATE KEY UPDATE login_bonus_id=VALUES(login_bonus_id), reward_sequence=VALUES(reward_sequence), item_type=VALUES(item_type), item_id=VALUES(item_id), amount=VALUES(amount), created_at=VALUES(created_at)",
 			}, " ")
-			if _, err = tx1.NamedExec(query, data); err != nil {
+			if _, err = tx.NamedExec(query, data); err != nil {
 				return err
 			}
 			return nil
