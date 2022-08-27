@@ -70,6 +70,9 @@ DB2のテーブル
 
 */
 
+var userOneTimeTokenMapMutex sync.RWMutex
+var userOneTimeTokenMap map[int64]UserOneTimeToken
+
 func initializeLocalCache(dbx *sqlx.DB) error {
 	res, err := dbx.Exec("UPDATE id_generator2 SET id=LAST_INSERT_ID(id+100000000000)")
 	if err != nil {
@@ -81,7 +84,38 @@ func initializeLocalCache(dbx *sqlx.DB) error {
 	}
 
 	clearGachaItemMasterMap()
+	loadUserOneTime()
 
+	return nil
+}
+
+func loadUserOneTime() error {
+	tokens := make([]*UserOneTimeToken, 0, 100)
+
+	tm := map[int64]UserOneTimeToken{}
+	query := "SELECT * FROM user_one_time_tokens WHERE deleted_at IS NULL"
+
+	dbx1, _ := connectDB1(false)
+	if err := dbx1.Select(tokens, query); err != nil {
+		return err
+	}
+
+	for _, tk := range tokens {
+		tm[tk.UserID] = *tk
+	}
+
+	dbx3, _ := connectDB1(false)
+	if err := dbx3.Select(tokens, query); err != nil {
+		return err
+	}
+
+	for _, tk := range tokens {
+		tm[tk.UserID] = *tk
+	}
+
+	userOneTimeTokenMapMutex.Lock()
+	userOneTimeTokenMap = tm
+	userOneTimeTokenMapMutex.Unlock()
 	return nil
 }
 
@@ -398,31 +432,33 @@ func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc
 
 // checkOneTimeToken
 func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, requestAt int64) error {
-	tk := new(UserOneTimeToken)
 
-	db1, _ := h.getDatabaseForUserID(userID)
-
-	query := "SELECT * FROM user_one_time_tokens WHERE token=? AND token_type=? AND deleted_at IS NULL"
-	if err := db1.Get(tk, query, token, tokenType); err != nil {
-		if err == sql.ErrNoRows {
-			return ErrInvalidToken
-		}
-		return err
-	}
-
-	if tk.ExpiredAt < requestAt {
-		query = "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
-		if _, err := db1.Exec(query, requestAt, token); err != nil {
-			return err
-		}
+	userOneTimeTokenMapMutex.Lock()
+	tk, ok := userOneTimeTokenMap[userID]
+	if ok && tk.Token == token && tk.TokenType == tokenType {
+		delete(userOneTimeTokenMap, userID)
+	} else {
+		userOneTimeTokenMapMutex.Unlock()
 		return ErrInvalidToken
 	}
 
-	// 使ったトークンを失効する
-	query = "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
-	if _, err := db1.Exec(query, requestAt, token); err != nil {
-		return err
+	userOneTimeTokenMapMutex.Unlock()
+
+	db1, _ := h.getDatabaseForUserID(userID)
+
+	if tk.ExpiredAt < requestAt {
+		go func() {
+			query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
+			db1.Exec(query, requestAt, token)
+		}()
+		return ErrInvalidToken
 	}
+
+	go func() {
+		// 使ったトークンを失効する
+		query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
+		db1.Exec(query, requestAt, token)
+	}()
 
 	return nil
 }
@@ -1200,10 +1236,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 	}
 
 	// genearte one time token
-	query = "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-	if _, err = db1.Exec(query, requestAt, userID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+
 	tID, err := h.generateID()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -1212,7 +1245,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	token := &UserOneTimeToken{
+	token := UserOneTimeToken{
 		ID:        tID,
 		UserID:    userID,
 		Token:     tk,
@@ -1221,10 +1254,17 @@ func (h *Handler) listGacha(c echo.Context) error {
 		UpdatedAt: requestAt,
 		ExpiredAt: requestAt + 600,
 	}
-	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err = db1.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+
+	userOneTimeTokenMapMutex.Lock()
+	userOneTimeTokenMap[userID] = token
+	userOneTimeTokenMapMutex.Unlock()
+
+	go func() {
+		query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
+		db1.Exec(query, requestAt, userID)
+		query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+		db1.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
+	}()
 
 	return successResponse(c, &ListGachaResponse{
 		OneTimeToken: token.Token,
@@ -1594,10 +1634,7 @@ func (h *Handler) listItem(c echo.Context) error {
 	}
 
 	// genearte one time token
-	query = "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-	if _, err = db1.Exec(query, requestAt, userID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+
 	tID, err := h.generateID()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -1606,7 +1643,7 @@ func (h *Handler) listItem(c echo.Context) error {
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	token := &UserOneTimeToken{
+	token := UserOneTimeToken{
 		ID:        tID,
 		UserID:    userID,
 		Token:     tk,
@@ -1615,11 +1652,16 @@ func (h *Handler) listItem(c echo.Context) error {
 		UpdatedAt: requestAt,
 		ExpiredAt: requestAt + 600,
 	}
-	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err = db1.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	userOneTimeTokenMapMutex.Lock()
+	userOneTimeTokenMap[userID] = token
+	userOneTimeTokenMapMutex.Unlock()
 
+	go func() {
+		query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
+		db1.Exec(query, requestAt, userID)
+		query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+		db1.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
+	}()
 	return successResponse(c, &ListItemResponse{
 		OneTimeToken: token.Token,
 		Items:        itemList,
