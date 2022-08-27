@@ -78,6 +78,9 @@ func initializeLocalCache(dbx *sqlx.DB) error {
 	if err != nil {
 		return err
 	}
+
+	clearGachaItemMasterMap()
+
 	return nil
 }
 
@@ -1138,7 +1141,10 @@ func clearGachaItemMasterMap() {
 }
 
 func (h *Handler) loadGachaItemMasters(gachaId int64) ([]*GachaItemMaster, error) {
-	if val, found := gachaItemMasterMap[gachaId]; found {
+	gachaItemMasterMutex.RLock()
+	val, found := gachaItemMasterMap[gachaId]
+	gachaItemMasterMutex.RUnlock()
+	if found {
 		return val, nil
 	}
 
@@ -1323,8 +1329,9 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	}
 
 	// gachaItemMasterからアイテムリスト取得
-	gachaItemList := make([]*GachaItemMaster, 0)
-	err = masterDB.Select(&gachaItemList, "SELECT * FROM gacha_item_masters WHERE gacha_id=? ORDER BY id ASC", gachaID)
+	gachaIDint, _ := strconv.Atoi(gachaID)
+	gachaItemList, err := h.loadGachaItemMasters(int64(gachaIDint))
+
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1334,12 +1341,8 @@ func (h *Handler) drawGacha(c echo.Context) error {
 
 	// weightの合計値を算出
 	var sum int64
-	err = masterDB.Get(&sum, "SELECT SUM(weight) FROM gacha_item_masters WHERE gacha_id=?", gachaID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, err)
-		}
-		return errorResponse(c, http.StatusInternalServerError, err)
+	for _, g := range gachaItemList {
+		sum += int64(g.Weight)
 	}
 
 	// random値の導出 & 抽選
