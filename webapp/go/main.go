@@ -60,6 +60,9 @@ type Handler struct {
 
 DB2のテーブル
 - user_devices
+- present_all_masters
+- user_presents
+- user_present_all_received_history
 
 */
 
@@ -360,7 +363,7 @@ func getRequestTime(c echo.Context) (int64, error) {
 }
 
 // loginProcess ログイン処理
-func (h *Handler) loginProcess(tx *sqlx.Tx, userID int64, requestAt int64) (*User, []*UserLoginBonus, []*UserPresent, error) {
+func (h *Handler) loginProcess(tx *sqlx.Tx, tx2 *sqlx.Tx, userID int64, requestAt int64) (*User, []*UserLoginBonus, []*UserPresent, error) {
 	user := new(User)
 	query := "SELECT * FROM users WHERE id=?"
 	if err := tx.Get(user, query, userID); err != nil {
@@ -377,7 +380,7 @@ func (h *Handler) loginProcess(tx *sqlx.Tx, userID int64, requestAt int64) (*Use
 	}
 
 	// 全員プレゼント取得
-	allPresents, err := h.obtainPresent(tx, userID, requestAt)
+	allPresents, err := h.obtainPresent(tx2, userID, requestAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -492,7 +495,7 @@ func (h *Handler) obtainLoginBonus(tx *sqlx.Tx, userID int64, requestAt int64) (
 	return sendLoginBonuses, nil
 }
 
-// obtainPresent プレゼント付与処理
+// obtainPresent プレゼント付与処理 (DB2で処理する)
 func (h *Handler) obtainPresent(tx *sqlx.Tx, userID int64, requestAt int64) ([]*UserPresent, error) {
 	normalPresents := make([]*PresentAllMaster, 0, 50)
 	// query := "SELECT * FROM present_all_masters WHERE registered_start_at <= ? AND registered_end_at >= ?"
@@ -832,7 +835,7 @@ func (h *Handler) createUser(c echo.Context) error {
 	}
 
 	// ログイン処理
-	user, loginBonuses, presents, err := h.loginProcess(tx, user.ID, requestAt)
+	user, loginBonuses, presents, err := h.loginProcess(tx, tx2, user.ID, requestAt)
 	if err != nil {
 		if err == ErrUserNotFound || err == ErrItemNotFound || err == ErrLoginBonusRewardNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
@@ -942,6 +945,12 @@ func (h *Handler) login(c echo.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	tx2, err := h.DB.Beginx()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	defer tx2.Rollback() //nolint:errcheck
+
 	// sessionを更新
 	query = "UPDATE user_sessions SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
 	if _, err = tx.Exec(query, requestAt, req.UserID); err != nil {
@@ -983,6 +992,11 @@ func (h *Handler) login(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 
+		err = tx2.Commit()
+		if err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+
 		return successResponse(c, &LoginResponse{
 			ViewerID:         req.ViewerID,
 			SessionID:        sess.SessionID,
@@ -991,7 +1005,7 @@ func (h *Handler) login(c echo.Context) error {
 	}
 
 	// login process
-	user, loginBonuses, presents, err := h.loginProcess(tx, req.UserID, requestAt)
+	user, loginBonuses, presents, err := h.loginProcess(tx, tx2, req.UserID, requestAt)
 	if err != nil {
 		if err == ErrUserNotFound || err == ErrItemNotFound || err == ErrLoginBonusRewardNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
@@ -1225,6 +1239,12 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	tx2, err := h.DB.Beginx()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	defer tx2.Rollback() //nolint:errcheck
+
 	// 直付与 => プレゼントに入れる
 	presents := make([]*UserPresent, 0, gachaCount)
 	for _, v := range result {
@@ -1244,7 +1264,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 			UpdatedAt:      requestAt,
 		}
 		query = "INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-		if _, err := tx.Exec(query, present.ID, present.UserID, present.SentAt, present.ItemType, present.ItemID, present.Amount, present.PresentMessage, present.CreatedAt, present.UpdatedAt); err != nil {
+		if _, err := tx2.Exec(query, present.ID, present.UserID, present.SentAt, present.ItemType, present.ItemID, present.Amount, present.PresentMessage, present.CreatedAt, present.UpdatedAt); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 
@@ -1259,6 +1279,10 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	}
 
 	err = tx.Commit()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	err = tx2.Commit()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1300,12 +1324,12 @@ func (h *Handler) listPresent(c echo.Context) error {
 	WHERE user_id = ? AND deleted_at IS NULL
 	ORDER BY created_at DESC, id
 	LIMIT ? OFFSET ?`
-	if err = h.DB.Select(&presentList, query, userID, PresentCountPerPage, offset); err != nil {
+	if err = h.DB2.Select(&presentList, query, userID, PresentCountPerPage, offset); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
 	var presentCount int
-	if err = h.DB.Get(&presentCount, "SELECT COUNT(*) FROM user_presents WHERE user_id = ? AND deleted_at IS NULL", userID); err != nil {
+	if err = h.DB2.Get(&presentCount, "SELECT COUNT(*) FROM user_presents WHERE user_id = ? AND deleted_at IS NULL", userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1363,7 +1387,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
 	obtainPresent := []*UserPresent{}
-	if err = h.DB.Select(&obtainPresent, query, params...); err != nil {
+	if err = h.DB2.Select(&obtainPresent, query, params...); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
 
@@ -1379,6 +1403,12 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	tx2, err := h.DB.Beginx()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+	defer tx2.Rollback() //nolint:errcheck
+
 	// 配布処理
 	for i := range obtainPresent {
 		if obtainPresent[i].DeletedAt != nil {
@@ -1389,7 +1419,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		obtainPresent[i].DeletedAt = &requestAt
 		v := obtainPresent[i]
 		query = "UPDATE user_presents SET deleted_at=?, updated_at=? WHERE id=?"
-		_, err := tx.Exec(query, requestAt, requestAt, v.ID)
+		_, err := tx2.Exec(query, requestAt, requestAt, v.ID)
 		if err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
@@ -1407,6 +1437,11 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	}
 
 	err = tx.Commit()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	err = tx2.Commit()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
