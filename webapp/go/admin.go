@@ -429,6 +429,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 			}
 			return nil
 		}
+		clearGachaItemMasterMap()
 		var eg errgroup.Group
 		eg.Go(func() error { return f(tx1) })
 		eg.Go(func() error { return f(tx3) })
