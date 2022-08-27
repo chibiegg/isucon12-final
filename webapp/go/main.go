@@ -379,28 +379,24 @@ func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc
 func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, requestAt int64) error {
 	db1, _ := h.getDatabaseForUserID(userID)
 
-	// oneTimeTokenMutex.RLock()
-	// v, ok := oneTimeTokenMap[userID]
-	// oneTimeTokenMutex.RUnlock()
-	// if !ok {
-	// 	return ErrInvalidToken
-	// }
-	// oneTimeTokenMutex.RUnlock()
-	// query := "SELECT * FROM user_one_time_tokens WHERE token=? AND token_type=? AND deleted_at IS NULL"
-	// if err := db1.Get(tk, query, token, tokenType); err != nil {
-	// 	if err == sql.ErrNoRows {
-	// 		return ErrInvalidToken
-	// 	}
-	// 	return err
-	// }
+	oneTimeTokenMutex.Lock()
+	var tk UserOneTimeToken
+	if _, ok := oneTimeTokenMap[userID]; !ok {
+		tkp := new(UserOneTimeToken)
+		query := "SELECT * FROM user_one_time_tokens WHERE token=? AND token_type=? AND deleted_at IS NULL"
+		if err := db1.Get(tk, query, token, tokenType); err != nil {
+			oneTimeTokenMutex.Unlock()
+			if err == sql.ErrNoRows {
+				return ErrInvalidToken
+			}
+			return err
+		}
+		tk = *tkp
+	} else {
+		tk = oneTimeTokenMap[userID]
+	}
 
 	// 使ったトークンを失効する
-	oneTimeTokenMutex.Lock()
-	if _, ok := oneTimeTokenMap[userID]; !ok {
-		oneTimeTokenMutex.Unlock()
-		return ErrInvalidToken
-	}
-	tk := oneTimeTokenMap[userID]
 	delete(oneTimeTokenMap, userID)
 	oneTimeTokenMutex.Unlock()
 	go func() {
