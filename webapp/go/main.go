@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -66,6 +67,9 @@ DB2のテーブル
 
 */
 
+var userDevicesMutex sync.RWMutex
+var userDevicesMap map[int64]UserDevice
+
 func initializeLocalCache(dbx *sqlx.DB) error {
 	res, err := dbx.Exec("UPDATE id_generator2 SET id=LAST_INSERT_ID(id+100000000000)")
 	if err != nil {
@@ -75,6 +79,19 @@ func initializeLocalCache(dbx *sqlx.DB) error {
 	if err != nil {
 		return err
 	}
+
+	userDevicesMutex.Lock()
+	userDevicesList := make([]*UserDevice, 0)
+	err = dbx.Select(userDevicesList, "SELECT * FROM user_devices")
+	if err != nil {
+		return err
+	}
+	userDevicesMap = map[int64]UserDevice{}
+	for _, u := range userDevicesList {
+		userDevicesMap[u.UserID] = *u
+	}
+	userDevicesMutex.Unlock()
+
 	return nil
 }
 
@@ -328,16 +345,15 @@ func (h *Handler) checkOneTimeToken(token string, tokenType int, requestAt int64
 
 // checkViewerID
 func (h *Handler) checkViewerID(userID int64, viewerID string) error {
-	query := "SELECT * FROM user_devices WHERE user_id=? AND platform_id=?"
-	device := new(UserDevice)
-	if err := h.DB2.Get(device, query, userID, viewerID); err != nil {
-		if err == sql.ErrNoRows {
-			return ErrUserDeviceNotFound
-		}
-		return err
-	}
+	userDevicesMutex.RLock()
+	defer userDevicesMutex.RUnlock()
 
-	return nil
+	u, found := userDevicesMap[userID]
+	if !found || u.PlatformID != viewerID {
+		return ErrUserDeviceNotFound
+	} else {
+		return nil
+	}
 }
 
 // checkBan
@@ -775,11 +791,16 @@ func (h *Handler) createUser(c echo.Context) error {
 		CreatedAt:    requestAt,
 		UpdatedAt:    requestAt,
 	}
-	query = "INSERT INTO user_devices(id, user_id, platform_id, platform_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-	_, err = tx2.Exec(query, userDevice.ID, user.ID, req.ViewerID, req.PlatformType, requestAt, requestAt)
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	go func() {
+		query = "INSERT INTO user_devices(id, user_id, platform_id, platform_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+		_, err = h.DB2.Exec(query, userDevice.ID, user.ID, req.ViewerID, req.PlatformType, requestAt, requestAt)
+		// if err != nil {
+		// 	return errorResponse(c, http.StatusInternalServerError, err)
+		// }
+	}()
+	userDevicesMutex.Lock()
+	userDevicesMap[userDevice.UserID] = *userDevice
+	userDevicesMutex.Unlock()
 
 	// 初期デッキ付与
 	initCard := new(ItemMaster)
