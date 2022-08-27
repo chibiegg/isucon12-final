@@ -21,6 +21,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 
 	_ "net/http/pprof"
 
@@ -1059,14 +1060,21 @@ func (h *Handler) login(c echo.Context) error {
 	defer tx2.Rollback() //nolint:errcheck
 
 	// セッションを削除
-	f := func(db *sqlx.DB, userID int64) {
+	f := func(db *sqlx.DB, userID int64) error {
 		query := "UPDATE user_sessions SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-		db.Exec(query, requestAt, userID)
+		_, err := db.Exec(query, requestAt, userID)
+		return err
 	}
-	go f(h.DB1, req.UserID)
-	go f(h.DB2, req.UserID)
-	go f(h.DB3, req.UserID)
-	go f(h.DB4, req.UserID)
+	var eg errgroup.Group
+
+	eg.Go(func() error { return f(h.DB1, req.UserID) })
+	eg.Go(func() error { return f(h.DB2, req.UserID) })
+	eg.Go(func() error { return f(h.DB3, req.UserID) })
+	eg.Go(func() error { return f(h.DB4, req.UserID) })
+	err = eg.Wait()
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, err)
+	}
 
 	// sessionを更新
 	sID, err := h.generateID()
