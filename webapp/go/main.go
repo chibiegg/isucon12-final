@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -58,6 +60,9 @@ type Handler struct {
 	DB4 *sqlx.DB
 }
 
+var gachaItemMasterMutex sync.RWMutex
+var gachaItemMasterMap map[int64][]GachaItemMaster
+
 /*
 
 DB2のテーブル
@@ -68,6 +73,21 @@ DB2のテーブル
 
 */
 
+func loadGachaItemMaster(tx *sqlx.Tx) error {
+	gachaItemList := []GachaItemMaster{}
+	err := tx.Select(gachaItemList, "SELECT * FROM gacha_item_masters")
+	if err != nil {
+		return err
+	}
+	gachaItemMasterMutex.Lock()
+	gachaItemMasterMap = map[int64][]GachaItemMaster{}
+	for _, g := range gachaItemList {
+		gachaItemMasterMap[g.GachaID] = append(gachaItemMasterMap[g.GachaID], g)
+	}
+	gachaItemMasterMutex.Unlock()
+	return nil
+}
+
 func initializeLocalCache(dbx *sqlx.DB) error {
 	res, err := dbx.Exec("UPDATE id_generator2 SET id=LAST_INSERT_ID(id+100000000000)")
 	if err != nil {
@@ -77,6 +97,14 @@ func initializeLocalCache(dbx *sqlx.DB) error {
 	if err != nil {
 		return err
 	}
+
+	tx, err := dbx.Beginx()
+	err = loadGachaItemMaster(tx)
+	if err != nil {
+		return err
+	}
+	tx.Commit()
+
 	return nil
 }
 
@@ -1158,13 +1186,16 @@ func (h *Handler) listGacha(c echo.Context) error {
 
 	// ガチャ排出アイテム取得
 	gachaDataList := make([]*GachaData, 0)
-	query = "SELECT * FROM gacha_item_masters WHERE gacha_id=? ORDER BY id ASC"
 	for _, v := range gachaMasterList {
 		var gachaItem []*GachaItemMaster
-		err = masterDB.Select(&gachaItem, query, v.ID)
-		if err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
+		gachaItemMasterMutex.RLock()
+		for _, g := range gachaItemMasterMap[v.ID] {
+			gachaItem = append(gachaItem, &g)
 		}
+		gachaItemMasterMutex.RUnlock()
+		sort.Slice(gachaItem, func(i, j int) bool {
+			return gachaItem[i].ID < gachaItem[j].ID
+		})
 
 		if len(gachaItem) == 0 {
 			return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found gacha item"))
@@ -1295,22 +1326,28 @@ func (h *Handler) drawGacha(c echo.Context) error {
 
 	// gachaItemMasterからアイテムリスト取得
 	gachaItemList := make([]*GachaItemMaster, 0)
-	err = masterDB.Select(&gachaItemList, "SELECT * FROM gacha_item_masters WHERE gacha_id=? ORDER BY id ASC", gachaID)
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
+
+	var gachaItem []*GachaItemMaster
+	gachaItemMasterMutex.RLock()
+
+	gachaIDint, _ := strconv.Atoi(gachaID)
+	for _, g := range gachaItemMasterMap[int64(gachaIDint)] {
+		gachaItem = append(gachaItem, &g)
 	}
+
+	gachaItemMasterMutex.RUnlock()
+	sort.Slice(gachaItem, func(i, j int) bool {
+		return gachaItem[i].ID < gachaItem[j].ID
+	})
+
 	if len(gachaItemList) == 0 {
 		return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found gacha item"))
 	}
 
 	// weightの合計値を算出
 	var sum int64
-	err = masterDB.Get(&sum, "SELECT SUM(weight) FROM gacha_item_masters WHERE gacha_id=?", gachaID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, err)
-		}
-		return errorResponse(c, http.StatusInternalServerError, err)
+	for _, g := range gachaItemList {
+		sum += int64(g.Weight)
 	}
 
 	// random値の導出 & 抽選
