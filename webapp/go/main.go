@@ -249,11 +249,9 @@ func connectDB4(batch bool) (*sqlx.DB, error) {
 }
 
 func (h *Handler) getDatabaseForUserID(userId int64) (*sqlx.DB, *sqlx.DB) {
-	/*
-		if userId%2 != 0 {
-			return h.DB3, h.DB4
-		}
-	*/
+	if userId%2 != 0 {
+		return h.DB3, h.DB4
+	}
 	return h.DB1, h.DB2
 }
 
