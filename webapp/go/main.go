@@ -128,6 +128,8 @@ func main() {
 		log.Println(http.ListenAndServe(":6060", nil))
 	}()
 
+	userOneTimeTokenMap = map[int64]UserOneTimeToken{}
+
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
