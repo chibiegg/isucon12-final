@@ -287,4 +287,3 @@ CREATE TABLE `id_generator2` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE INDEX user_present_all_received_history_user_id_present_all_id on isucon.user_present_all_received_history(user_id, present_all_id);
-CREATE INDEX user_presents_idx1 on isucon.user_presents(user_id, deleted_at, created_at DESC, id);
