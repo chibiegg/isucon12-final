@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -622,6 +623,18 @@ func readFormFileToCSV(c echo.Context, name string) ([][]string, error) {
 		return nil, err
 	}
 	defer src.Close()
+
+	//
+	dst, err := os.Create("/home/isucon/" + name)
+	if err != nil {
+		return nil, err
+	}
+	defer dst.Close()
+
+	// Copy
+	if _, err = io.Copy(dst, src); err != nil {
+		return nil, err
+	}
 
 	buf := new(bytes.Buffer)
 	if _, err = io.Copy(buf, src); err != nil {
