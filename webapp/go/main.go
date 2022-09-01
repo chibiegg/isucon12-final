@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/rand"
 	"net/http"
@@ -22,6 +23,10 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
+
+	_ "net/http/pprof"
+
+	"github.com/felixge/fgprof"
 )
 
 var (
@@ -118,14 +123,15 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
 
+	http.DefaultServeMux.Handle("/debug/fgprof", fgprof.Handler())
+	go func() {
+		log.Println(http.ListenAndServe(":6060", nil))
+	}()
+
 	userOneTimeTokenMap = map[int64]UserOneTimeToken{}
 
 	e := echo.New()
-
-	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Output: io.Discard,
-	}))
-	e.Logger.SetLevel(0)
+	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"*"},
