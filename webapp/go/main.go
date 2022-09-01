@@ -213,7 +213,7 @@ func main() {
 
 func connectDB1(batch bool) (*sqlx.DB, error) {
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t",
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t&interpolateParams=true",
 		getEnv("ISUCON_DB_USER", "isucon"),
 		getEnv("ISUCON_DB_PASSWORD", "isucon"),
 		getEnv("ISUCON_DB_HOST1", "127.0.0.1"),
@@ -231,7 +231,7 @@ func connectDB1(batch bool) (*sqlx.DB, error) {
 
 func connectDB2(batch bool) (*sqlx.DB, error) {
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t",
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t&interpolateParams=true",
 		getEnv("ISUCON_DB_USER", "isucon"),
 		getEnv("ISUCON_DB_PASSWORD", "isucon"),
 		getEnv("ISUCON_DB_HOST2", "127.0.0.1"),
@@ -249,7 +249,7 @@ func connectDB2(batch bool) (*sqlx.DB, error) {
 
 func connectDB3(batch bool) (*sqlx.DB, error) {
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t",
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t&interpolateParams=true",
 		getEnv("ISUCON_DB_USER", "isucon"),
 		getEnv("ISUCON_DB_PASSWORD", "isucon"),
 		getEnv("ISUCON_DB_HOST3", "127.0.0.1"),
@@ -267,7 +267,7 @@ func connectDB3(batch bool) (*sqlx.DB, error) {
 
 func connectDB4(batch bool) (*sqlx.DB, error) {
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t",
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=%s&multiStatements=%t&interpolateParams=true",
 		getEnv("ISUCON_DB_USER", "isucon"),
 		getEnv("ISUCON_DB_PASSWORD", "isucon"),
 		getEnv("ISUCON_DB_HOST4", "127.0.0.1"),
