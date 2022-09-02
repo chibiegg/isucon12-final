@@ -22,7 +22,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
-	"golang.org/x/sync/errgroup"
 
 	_ "net/http/pprof"
 
@@ -66,6 +65,9 @@ var userBansMapMutex sync.RWMutex
 var userBansMap map[int64]struct{}
 var versionMasterMutex sync.RWMutex
 var versionMasterValue int64
+var sessionMutex sync.RWMutex
+var sessionIdMap map[string]*Session
+var sessionUserIdToFreshSessionId map[int64]string
 
 func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 	if err := loadIdGenerator2(dbx); err != nil {
@@ -77,6 +79,9 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 		return err
 	}
 	if err := loadVersionMaster(dbx); err != nil {
+		return err
+	}
+	if err := loadSession(h); err != nil {
 		return err
 	}
 
@@ -149,6 +154,24 @@ func loadVersionMaster(dbx *sqlx.DB) error {
 	versionMasterMutex.Lock()
 	versionMasterValue = masterVersion.ID
 	versionMasterMutex.Unlock()
+	return nil
+}
+
+func loadSession(h *Handler) error {
+	sessionMutex.Lock()
+	defer sessionMutex.Unlock()
+
+	sessionIdMap = map[string]*Session{}
+	sessionUserIdToFreshSessionId = map[int64]string{}
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		sessions := make([]*Session, 0)
+		db.Select(&sessions, "SELECT * FROM user_sessions WHERE deleted_at IS NULL")
+		for _, session := range sessions {
+			sessionIdMap[session.SessionID] = session
+			sessionUserIdToFreshSessionId[session.UserID] = session.SessionID
+		}
+	}
+
 	return nil
 }
 
@@ -384,26 +407,18 @@ func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc
 			return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 		}
 
-		sessDB := h.getSessionDatabase(sessID)
+		sessionMutex.RLock()
+		userSession := sessionIdMap[sessID]
+		sessionMutex.RUnlock()
 
-		userSession := new(Session)
-		query := "SELECT * FROM user_sessions WHERE session_id=? AND deleted_at IS NULL"
-		if err := sessDB.Get(userSession, query, sessID); err != nil {
-			if err == sql.ErrNoRows {
-				return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
-			}
-			return errorResponse(c, http.StatusInternalServerError, err)
+		if userSession == nil {
+			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 		}
-
 		if userSession.UserID != userID {
 			return errorResponse(c, http.StatusForbidden, ErrForbidden)
 		}
 
 		if userSession.ExpiredAt < requestAt {
-			query = "UPDATE user_sessions SET deleted_at=? WHERE session_id=?"
-			if _, err = sessDB.Exec(query, requestAt, sessID); err != nil {
-				return errorResponse(c, http.StatusInternalServerError, err)
-			}
 			return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
 		}
 
@@ -1068,8 +1083,6 @@ func (h *Handler) createUser(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	sessDB := h.getSessionDatabase(sessID)
-
 	sess := &Session{
 		ID:        sID,
 		UserID:    user.ID,
@@ -1078,10 +1091,17 @@ func (h *Handler) createUser(c echo.Context) error {
 		UpdatedAt: requestAt,
 		ExpiredAt: requestAt + 86400,
 	}
-	query = "INSERT INTO user_sessions(id, user_id, session_id, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?)"
-	if _, err = sessDB.Exec(query, sess.ID, sess.UserID, sess.SessionID, sess.CreatedAt, sess.UpdatedAt, sess.ExpiredAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+
+	sessionMutex.Lock()
+	sessionUserIdToFreshSessionId[user.ID] = sessID
+	sessionIdMap[sessID] = sess
+	sessionMutex.Unlock()
+
+	sessDB := h.getSessionDatabase(sessID)
+	go func() {
+		query = "INSERT INTO user_sessions(id, user_id, session_id, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?)"
+		sessDB.Exec(query, sess.ID, sess.UserID, sess.SessionID, sess.CreatedAt, sess.UpdatedAt, sess.ExpiredAt)
+	}()
 
 	return successResponse(c, &CreateUserResponse{
 		UserID:           user.ID,
@@ -1147,21 +1167,20 @@ func (h *Handler) login(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	// セッションを削除
-	f := func(db *sqlx.DB, userID int64) error {
-		query := "UPDATE user_sessions SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-		_, err := db.Exec(query, requestAt, userID)
-		return err
-	}
-	var eg errgroup.Group
+	sessionMutex.Lock()
+	sessionIdTiedToUser := sessionUserIdToFreshSessionId[req.UserID]
+	if sessionIdTiedToUser != "" {
+		// セッションを削除
+		f := func(db *sqlx.DB, userID int64) error {
+			query := "UPDATE user_sessions SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
+			_, err := db.Exec(query, requestAt, userID)
+			return err
+		}
 
-	eg.Go(func() error { return f(h.DB1, req.UserID) })
-	eg.Go(func() error { return f(h.DB2, req.UserID) })
-	eg.Go(func() error { return f(h.DB3, req.UserID) })
-	eg.Go(func() error { return f(h.DB4, req.UserID) })
-	err = eg.Wait()
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
+		sessionDB := h.getSessionDatabase(sessionIdTiedToUser)
+		go func() {
+			f(sessionDB, req.UserID)
+		}()
 	}
 
 	// sessionを更新
@@ -1184,10 +1203,14 @@ func (h *Handler) login(c echo.Context) error {
 		UpdatedAt: requestAt,
 		ExpiredAt: requestAt + 86400,
 	}
-	query = "INSERT INTO user_sessions(id, user_id, session_id, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?)"
-	if _, err = sessDB.Exec(query, sess.ID, sess.UserID, sess.SessionID, sess.CreatedAt, sess.UpdatedAt, sess.ExpiredAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	sessionUserIdToFreshSessionId[req.UserID] = sessID
+	sessionIdMap[sessID] = sess
+	sessionMutex.Unlock()
+
+	go func() {
+		query = "INSERT INTO user_sessions(id, user_id, session_id, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?)"
+		sessDB.Exec(query, sess.ID, sess.UserID, sess.SessionID, sess.CreatedAt, sess.UpdatedAt, sess.ExpiredAt)
+	}()
 
 	// すでにログインしているユーザはログイン処理をしない
 	if isCompleteTodayLogin(time.Unix(user.LastActivatedAt, 0), time.Unix(requestAt, 0)) {
