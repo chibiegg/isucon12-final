@@ -544,7 +544,7 @@ func (h *Handler) loginProcess(db *sqlx.DB, userID int64, requestAt int64) (*Use
 	}
 
 	// ログインボーナス処理
-	loginBonuses, additionalCoins, err := h.obtainLoginBonus(db, userID, requestAt)
+	loginBonuses, err := h.obtainLoginBonus(db, userID, requestAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -555,7 +555,6 @@ func (h *Handler) loginProcess(db *sqlx.DB, userID int64, requestAt int64) (*Use
 		return nil, nil, nil, err
 	}
 
-	user.IsuCoin += additionalCoins
 	user.UpdatedAt = requestAt
 	user.LastActivatedAt = requestAt
 
@@ -575,12 +574,12 @@ func isCompleteTodayLogin(lastActivatedAt, requestAt time.Time) bool {
 }
 
 // obtainLoginBonus
-func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) ([]*UserLoginBonus, int64, error) {
+func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) ([]*UserLoginBonus, error) {
 	// login bonus masterから有効なログインボーナスを取得
 	loginBonuses := make([]*LoginBonusMaster, 0)
 	query := "SELECT * FROM login_bonus_masters WHERE start_at <= ? AND end_at >= ?"
 	if err := db.Select(&loginBonuses, query, requestAt, requestAt); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	sendLoginBonuses := make([]*UserLoginBonus, 0)
@@ -593,13 +592,13 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 		query = "SELECT * FROM user_login_bonuses WHERE user_id=? AND login_bonus_id=?"
 		if err := db.Get(userBonus, query, userID, bonus.ID); err != nil {
 			if err != sql.ErrNoRows {
-				return nil, 0, err
+				return nil, err
 			}
 			initBonus = true
 
 			ubID, err := h.generateID()
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			userBonus = &UserLoginBonus{ // ボーナス初期化
 				ID:                 ubID,
@@ -631,25 +630,25 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 		query = "SELECT * FROM login_bonus_reward_masters WHERE login_bonus_id=? AND reward_sequence=?"
 		if err := db.Get(rewardItem, query, bonus.ID, userBonus.LastRewardSequence); err != nil {
 			if err == sql.ErrNoRows {
-				return nil, 0, ErrLoginBonusRewardNotFound
+				return nil, ErrLoginBonusRewardNotFound
 			}
-			return nil, 0, err
+			return nil, err
 		}
 
 		if err := h.obtainItemsConstructing(obtainItemProgress, db, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 
 		// 進捗の保存
 		if initBonus {
 			query = "INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
 			if _, err := db.Exec(query, userBonus.ID, userBonus.UserID, userBonus.LoginBonusID, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.CreatedAt, userBonus.UpdatedAt); err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 		} else {
 			query = "UPDATE user_login_bonuses SET last_reward_sequence=?, loop_count=?, updated_at=? WHERE id=?"
 			if _, err := db.Exec(query, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.UpdatedAt, userBonus.ID); err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 		}
 
@@ -657,7 +656,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 	}
 	h.recordObtainItemResult(obtainItemProgress, db, userID)
 
-	return sendLoginBonuses, obtainItemProgress.coins, nil
+	return sendLoginBonuses, nil
 }
 
 // obtainPresent プレゼント付与処理
@@ -811,6 +810,11 @@ func (h *Handler) obtainItemsConstructing(currentItems *ObtainItemProgress, db *
 
 func (h *Handler) recordObtainItemResult(currentItems *ObtainItemProgress, db *sqlx.DB, userID int64) error {
 	if currentItems.coins != 0 {
+		userMutex.Lock()
+		user := userMap[userID]
+		user.IsuCoin += currentItems.coins
+		userMutex.Unlock()
+
 		go func() {
 			query := "UPDATE users SET isu_coin=?+isu_coin WHERE id=?"
 			db.Exec(query, currentItems.coins, userID)
@@ -1667,10 +1671,6 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		}
 	}
 	h.recordObtainItemResult(obtainItemProgress, db, userID)
-	userMutex.Lock()
-	user := userMap[userID]
-	user.IsuCoin += obtainItemProgress.coins
-	userMutex.Unlock()
 
 	return successResponse(c, &ReceivePresentResponse{
 		UpdatedResources: makeUpdatedResources(requestAt, nil, nil, nil, nil, nil, nil, obtainPresent),
