@@ -167,9 +167,9 @@ CREATE TABLE `user_items` (
   `created_at` bigint NOT NULL,
   `updated_at`bigint NOT NULL,
   `deleted_at` bigint default NULL,
-  PRIMARY KEY (`id`),
-  INDEX userid_idx (`user_id`)
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+ALTER TABLE isucon.user_items ADD UNIQUE user_id_item_id_unique_idx (user_id, item_id);
 
 CREATE TABLE `user_cards` (
   `id` bigint NOT NULL,

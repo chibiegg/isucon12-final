@@ -682,6 +682,106 @@ func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*
 	return obtainPresents, nil
 }
 
+type ObtainItemProgress struct {
+	coins int64
+	cards []*UserCard
+	items []*UserItem
+}
+
+func (h *Handler) obtainItemsConstructing(currentItems *ObtainItemProgress, db *sqlx.DB, userID, itemID int64, itemType int, obtainAmount int64, requestAt int64) error {
+	switch itemType {
+	case 1: // coin
+		currentItems.coins += obtainAmount
+
+	case 2: // card(ハンマー)
+		query := "SELECT * FROM item_masters WHERE id=? AND item_type=?"
+		item := new(ItemMaster)
+		if err := db.Get(item, query, itemID, itemType); err != nil {
+			if err == sql.ErrNoRows {
+				return ErrItemNotFound
+			}
+		}
+
+		cID, _ := h.generateID()
+		card := &UserCard{
+			ID:           cID,
+			UserID:       userID,
+			CardID:       item.ID,
+			AmountPerSec: *item.AmountPerSec,
+			Level:        1,
+			TotalExp:     0,
+			CreatedAt:    requestAt,
+			UpdatedAt:    requestAt,
+		}
+		currentItems.cards = append(currentItems.cards, card)
+
+	case 3, 4: // 強化素材
+		query := "SELECT * FROM item_masters WHERE id=? AND item_type=?"
+		item := new(ItemMaster)
+		if err := db.Get(item, query, itemID, itemType); err != nil {
+			if err == sql.ErrNoRows {
+				return ErrItemNotFound
+			}
+			return err
+		}
+
+		itemFound := false
+		for _, item := range currentItems.items {
+			if item.ItemID == itemID {
+				item.Amount += int(obtainAmount)
+				itemFound = true
+				break
+			}
+		}
+
+		if !itemFound {
+			uitemID, _ := h.generateID()
+			uitem := &UserItem{
+				ID:        uitemID,
+				UserID:    userID,
+				ItemType:  item.ItemType,
+				ItemID:    item.ID,
+				Amount:    int(obtainAmount),
+				CreatedAt: requestAt,
+				UpdatedAt: requestAt,
+			}
+			currentItems.items = append(currentItems.items, uitem)
+		}
+	default:
+		return ErrInvalidItemType
+	}
+	return nil
+}
+
+func (h *Handler) recordObtainItemResult(currentItems *ObtainItemProgress, db *sqlx.DB, userID int64) error {
+	if currentItems.coins != 0 {
+		query := "UPDATE users SET isu_coin=?+isu_coin WHERE id=?"
+		if _, err := db.Exec(query, currentItems.coins, userID); err != nil {
+			return err
+		}
+	}
+	if len(currentItems.cards) > 0 {
+		query := `
+		INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at)
+		VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)
+		`
+		if _, err := db.NamedExec(query, currentItems.cards); err != nil {
+			return err
+		}
+	}
+	if len(currentItems.items) > 0 {
+		query := `
+		INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at)
+		VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at)
+		ON DUPLICATE KEY UPDATE amount=amount+VALUES(amount), updated_at=VALUES(updated_at)
+		`
+		if _, err := db.NamedExec(query, currentItems.items); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // obtainItem アイテム付与処理
 func (h *Handler) obtainItem(db *sqlx.DB, userID, itemID int64, itemType int, obtainAmount int64, requestAt int64) ([]int64, []*UserCard, []*UserItem, error) {
 	obtainCoins := make([]int64, 0)
@@ -1551,16 +1651,34 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	for i := range obtainPresent {
-		if obtainPresent[i].DeletedAt != nil {
-			return errorResponse(c, http.StatusInternalServerError, fmt.Errorf("received present"))
-		}
+	// for i := range obtainPresent {
+	// 	if obtainPresent[i].DeletedAt != nil {
+	// 		return errorResponse(c, http.StatusInternalServerError, fmt.Errorf("received present"))
+	// 	}
 
+	// 	obtainPresent[i].UpdatedAt = requestAt
+	// 	obtainPresent[i].DeletedAt = &requestAt
+	// 	v := obtainPresent[i]
+
+	// 	_, _, _, err = h.obtainItem(db, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
+	// 	if err != nil {
+	// 		if err == ErrUserNotFound || err == ErrItemNotFound {
+	// 			return errorResponse(c, http.StatusNotFound, err)
+	// 		}
+	// 		if err == ErrInvalidItemType {
+	// 			return errorResponse(c, http.StatusBadRequest, err)
+	// 		}
+	// 		return errorResponse(c, http.StatusInternalServerError, err)
+	// 	}
+	// }
+
+	obtainItemProgress := &ObtainItemProgress{}
+	for i := range obtainPresent {
 		obtainPresent[i].UpdatedAt = requestAt
 		obtainPresent[i].DeletedAt = &requestAt
 		v := obtainPresent[i]
 
-		_, _, _, err = h.obtainItem(db, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
+		err = h.obtainItemsConstructing(obtainItemProgress, db, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
 		if err != nil {
 			if err == ErrUserNotFound || err == ErrItemNotFound {
 				return errorResponse(c, http.StatusNotFound, err)
@@ -1571,6 +1689,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
 	}
+	h.recordObtainItemResult(obtainItemProgress, db, userID)
 
 	return successResponse(c, &ReceivePresentResponse{
 		UpdatedResources: makeUpdatedResources(requestAt, nil, nil, nil, nil, nil, nil, obtainPresent),
