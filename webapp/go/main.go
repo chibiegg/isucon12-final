@@ -957,7 +957,7 @@ func (h *Handler) initialize(c echo.Context) error {
 		// bind before passing the go func to `eg.Go`.
 		mod := i
 		localDB := db
-		eg.Go(func() error { deleteUnusedRecords(mod, localDB); return nil })
+		eg.Go(func() error { deleteUnusedRecords(c, mod, localDB); return nil })
 	}
 	eg.Wait()
 
