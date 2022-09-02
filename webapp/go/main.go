@@ -927,6 +927,10 @@ func deleteUnusedRecords(mod int, db *sqlx.DB) {
 	db.Exec("DELETE FROM user_devices WHERE user_id % 4 != ?", mod)
 	db.Exec("DELETE FROM user_items WHERE user_id % 4 != ?", mod)
 	db.Exec("DELETE FROM user_login_bonues WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_one_time_tokens WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_present_all_received_history WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_presents WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM users WHERE user_id % 4 != ?", mod)
 }
 
 // initialize 初期化処理
