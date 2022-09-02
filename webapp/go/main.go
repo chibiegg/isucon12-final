@@ -920,6 +920,15 @@ func (h *Handler) obtainItem(db *sqlx.DB, userID, itemID int64, itemType int, ob
 	return obtainCoins, obtainCards, obtainItems, nil
 }
 
+func deleteUnusedRecords(mod int, db *sqlx.DB) {
+	db.Exec("DELETE FROM user_bans WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_cards WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_decks WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_devices WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_items WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_login_bonues WHERE user_id % 4 != ?", mod)
+}
+
 // initialize 初期化処理
 // POST /initialize
 func (h *Handler) initialize(c echo.Context) error {
@@ -933,6 +942,10 @@ func (h *Handler) initialize(c echo.Context) error {
 	if err != nil {
 		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
 		return errorResponse(c, http.StatusInternalServerError, err)
+	}
+
+	for i, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		deleteUnusedRecords(i, db)
 	}
 
 	err = initializeLocalCache(dbx, h)
