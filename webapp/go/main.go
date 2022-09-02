@@ -71,6 +71,8 @@ var sessionIdMap map[string]*Session
 var sessionUserIdToFreshSessionId map[int64]string
 var userMutex sync.RWMutex
 var userMap map[int64]*User
+var itemMasterMutex sync.RWMutex
+var itemMasterMap map[int64]*ItemMaster
 
 type UserDeviceMapKey struct {
 	UserID     int64
@@ -99,6 +101,9 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 		return err
 	}
 	if err := loadUser(h); err != nil {
+		return err
+	}
+	if err := loadItemMasters(h); err != nil {
 		return err
 	}
 
@@ -207,6 +212,19 @@ func loadUser(h *Handler) error {
 		}
 	}
 
+	return nil
+}
+
+func loadItemMasters(h *Handler) error {
+	itemMasterMutex.Lock()
+	defer itemMasterMutex.Unlock()
+
+	itemMasterMap = map[int64]*ItemMaster{}
+	itemMasters := make([]*ItemMaster, 0, 100)
+	h.DB1.Select(&itemMasters, "SELECT * FROM item_masters")
+	for _, im := range itemMasters {
+		itemMasterMap[im.ID] = im
+	}
 	return nil
 }
 
@@ -749,12 +767,9 @@ func (h *Handler) obtainItemsConstructing(currentItems *ObtainItemProgress, db *
 		currentItems.coins += obtainAmount
 
 	case 2: // card(ハンマー)
-		query := "SELECT * FROM item_masters WHERE id=? AND item_type=?"
-		item := new(ItemMaster)
-		if err := db.Get(item, query, itemID, itemType); err != nil {
-			if err == sql.ErrNoRows {
-				return ErrItemNotFound
-			}
+		item := itemMasterMap[itemID]
+		if item == nil || item.ItemType != itemType {
+			return ErrItemNotFound
 		}
 
 		cID, _ := h.generateID()
@@ -771,13 +786,9 @@ func (h *Handler) obtainItemsConstructing(currentItems *ObtainItemProgress, db *
 		currentItems.cards = append(currentItems.cards, card)
 
 	case 3, 4: // 強化素材
-		query := "SELECT * FROM item_masters WHERE id=? AND item_type=?"
-		item := new(ItemMaster)
-		if err := db.Get(item, query, itemID, itemType); err != nil {
-			if err == sql.ErrNoRows {
-				return ErrItemNotFound
-			}
-			return err
+		item := itemMasterMap[itemID]
+		if item == nil || item.ItemType != itemType {
+			return ErrItemNotFound
 		}
 
 		itemFound := false
@@ -965,12 +976,9 @@ func (h *Handler) createUser(c echo.Context) error {
 
 	// 初期デッキ付与
 	initCard := new(ItemMaster)
-	query := "SELECT * FROM item_masters WHERE id=?"
-	if err = db.Get(initCard, query, 2); err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, ErrItemNotFound)
-		}
-		return errorResponse(c, http.StatusInternalServerError, err)
+	item := itemMasterMap[2]
+	if item == nil {
+		return errorResponse(c, http.StatusNotFound, ErrItemNotFound)
 	}
 
 	initCards := make([]*UserCard, 0, 3)
@@ -989,7 +997,7 @@ func (h *Handler) createUser(c echo.Context) error {
 			CreatedAt:    requestAt,
 			UpdatedAt:    requestAt,
 		}
-		query = "INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+		query := "INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
 		if _, err := db.Exec(query, card.ID, card.UserID, card.CardID, card.AmountPerSec, card.Level, card.TotalExp, card.CreatedAt, card.UpdatedAt); err != nil {
 			return errorResponse(c, http.StatusInternalServerError, err)
 		}
@@ -1009,7 +1017,7 @@ func (h *Handler) createUser(c echo.Context) error {
 		CreatedAt: requestAt,
 		UpdatedAt: requestAt,
 	}
-	query = "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	query := "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
 	if _, err := db.Exec(query, initDeck.ID, initDeck.UserID, initDeck.CardID1, initDeck.CardID2, initDeck.CardID3, initDeck.CreatedAt, initDeck.UpdatedAt); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
