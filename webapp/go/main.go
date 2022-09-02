@@ -64,8 +64,26 @@ var userOneTimeTokenMapMutex sync.RWMutex
 var userOneTimeTokenMap map[int64]UserOneTimeToken
 var userBansMapMutex sync.RWMutex
 var userBansMap map[int64]struct{}
+var versionMasterMutex sync.RWMutex
+var versionMasterValue int64
 
 func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
+	if err := loadIdGenerator2(dbx); err != nil {
+		return err
+	}
+	clearGachaItemMasterMap()
+	loadUserOneTime()
+	if err := loadUserBans(h); err != nil {
+		return err
+	}
+	if err := loadVersionMaster(dbx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func loadIdGenerator2(dbx *sqlx.DB) error {
 	res, err := dbx.Exec("UPDATE id_generator2 SET id=LAST_INSERT_ID(id+1000000000000)")
 	if err != nil {
 		return err
@@ -74,13 +92,6 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 	if err != nil {
 		return err
 	}
-
-	clearGachaItemMasterMap()
-	loadUserOneTime()
-	if err := loadUserBans(h); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -126,6 +137,18 @@ func loadUserBans(h *Handler) error {
 		userBansMapMutex.Unlock()
 	}
 
+	return nil
+}
+
+func loadVersionMaster(dbx *sqlx.DB) error {
+	query := "SELECT * FROM version_masters WHERE status=1"
+	masterVersion := new(VersionMaster)
+	if err := dbx.Get(masterVersion, query); err != nil {
+		return err
+	}
+	versionMasterMutex.Lock()
+	versionMasterValue = masterVersion.ID
+	versionMasterMutex.Unlock()
 	return nil
 }
 
@@ -317,19 +340,8 @@ func (h *Handler) apiMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		}
 		c.Set("requestTime", requestAt.Unix())
 
-		masterDB := h.getMasterDatabase()
-
 		// マスタ確認
-		query := "SELECT * FROM version_masters WHERE status=1"
-		masterVersion := new(VersionMaster)
-		if err := masterDB.Get(masterVersion, query); err != nil {
-			if err == sql.ErrNoRows {
-				return errorResponse(c, http.StatusNotFound, fmt.Errorf("active master version is not found"))
-			}
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
-
-		if masterVersion.MasterVersion != c.Request().Header.Get("x-master-version") {
+		if strconv.FormatInt(versionMasterValue, 10) != c.Request().Header.Get("x-master-version") {
 			return errorResponse(c, http.StatusUnprocessableEntity, ErrInvalidMasterVersion)
 		}
 
