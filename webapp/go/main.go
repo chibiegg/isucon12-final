@@ -975,9 +975,8 @@ func (h *Handler) createUser(c echo.Context) error {
 	}()
 
 	// 初期デッキ付与
-	initCard := new(ItemMaster)
-	item := itemMasterMap[2]
-	if item == nil {
+	initCard := itemMasterMap[int64(2)]
+	if initCard == nil {
 		return errorResponse(c, http.StatusNotFound, ErrItemNotFound)
 	}
 
