@@ -233,7 +233,6 @@ func main() {
 
 	err = initializeLocalCache(dbx1, h)
 	if err != nil {
-
 		e.Logger.Fatalf("failed to init local cache. err=%+v", errors.WithStack(err))
 	}
 
@@ -922,7 +921,8 @@ func (h *Handler) obtainItem(db *sqlx.DB, userID, itemID int64, itemType int, ob
 	return obtainCoins, obtainCards, obtainItems, nil
 }
 
-func deleteUnusedRecords(mod int, db *sqlx.DB) {
+func deleteUnusedRecords(c echo.Context, mod int, db *sqlx.DB) {
+	c.Logger().Infof("Deleting % 4 == %d records from DB", mod)
 	db.Exec("DELETE FROM user_bans WHERE user_id % 4 != ?", mod)
 	db.Exec("DELETE FROM user_cards WHERE user_id % 4 != ?", mod)
 	db.Exec("DELETE FROM user_decks WHERE user_id % 4 != ?", mod)
