@@ -529,6 +529,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 	}
 
 	sendLoginBonuses := make([]*UserLoginBonus, 0)
+	obtainItemProgress := &ObtainItemProgress{}
 
 	for _, bonus := range loginBonuses {
 		initBonus := false
@@ -580,26 +581,26 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 			return nil, err
 		}
 
-		_, _, _, err := h.obtainItem(db, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt)
-		if err != nil {
+		if err := h.obtainItemsConstructing(obtainItemProgress, db, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt); err != nil {
 			return nil, err
 		}
 
 		// 進捗の保存
 		if initBonus {
 			query = "INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-			if _, err = db.Exec(query, userBonus.ID, userBonus.UserID, userBonus.LoginBonusID, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.CreatedAt, userBonus.UpdatedAt); err != nil {
+			if _, err := db.Exec(query, userBonus.ID, userBonus.UserID, userBonus.LoginBonusID, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.CreatedAt, userBonus.UpdatedAt); err != nil {
 				return nil, err
 			}
 		} else {
 			query = "UPDATE user_login_bonuses SET last_reward_sequence=?, loop_count=?, updated_at=? WHERE id=?"
-			if _, err = db.Exec(query, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.UpdatedAt, userBonus.ID); err != nil {
+			if _, err := db.Exec(query, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.UpdatedAt, userBonus.ID); err != nil {
 				return nil, err
 			}
 		}
 
 		sendLoginBonuses = append(sendLoginBonuses, userBonus)
 	}
+	h.recordObtainItemResult(obtainItemProgress, db, userID)
 
 	return sendLoginBonuses, nil
 }
