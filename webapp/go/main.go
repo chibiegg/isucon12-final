@@ -486,7 +486,7 @@ func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, r
 }
 
 // checkViewerID
-func (h *Handler) checkViewerID(userID int64, viewerID string) error {
+func (h *Handler) checkViewerID1(userID int64, viewerID string) error {
 	userDeviceMutex.RLock()
 	userDevice, found := userDeviceMap[userID]
 	userDeviceMutex.RUnlock()
@@ -496,6 +496,35 @@ func (h *Handler) checkViewerID(userID int64, viewerID string) error {
 	}
 
 	return nil
+}
+
+func (h *Handler) checkViewerID2(userID int64, viewerID string) error {
+	query := "SELECT * FROM user_devices WHERE user_id=? AND platform_id=?"
+	device := new(UserDevice)
+
+	db := h.getDatabaseForUserID(userID)
+
+	if err := db.Get(device, query, userID, viewerID); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrUserDeviceNotFound
+		}
+		return err
+	}
+
+	return nil
+}
+
+// checkViewerID
+func (h *Handler) checkViewerID(c echo.Context, userID int64, viewerID string) error {
+
+	res1 := h.checkViewerID1(userID, viewerID)
+	res2 := h.checkViewerID2(userID, viewerID)
+
+	if res1 != res2 {
+		c.Logger().Errorf("result mismatch: %v : %v. userID = %d, viewerID = %s", res1, res2, userID, viewerID)
+	}
+
+	return res2
 }
 
 // checkBan
@@ -1050,10 +1079,10 @@ func (h *Handler) createUser(c echo.Context) error {
 	userDeviceMutex.Lock()
 	userDeviceMap[user.ID] = userDevice
 	userDeviceMutex.Unlock()
-	go func() {
-		query = "INSERT INTO user_devices(id, user_id, platform_id, platform_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-		db.Exec(query, userDevice.ID, user.ID, req.ViewerID, req.PlatformType, requestAt, requestAt)
-	}()
+	// go func() {
+	query = "INSERT INTO user_devices(id, user_id, platform_id, platform_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+	db.Exec(query, userDevice.ID, user.ID, req.ViewerID, req.PlatformType, requestAt, requestAt)
+	// }()
 
 	// 初期デッキ付与
 	initCard := new(ItemMaster)
@@ -1205,7 +1234,7 @@ func (h *Handler) login(c echo.Context) error {
 	}
 
 	// viewer id check
-	if err = h.checkViewerID(user.ID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(c, user.ID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -1472,7 +1501,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -1679,7 +1708,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		return errorResponse(c, http.StatusUnprocessableEntity, fmt.Errorf("presentIds is empty"))
 	}
 
-	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -1898,7 +1927,7 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -2079,7 +2108,7 @@ func (h *Handler) updateDeck(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -2160,7 +2189,7 @@ func (h *Handler) reward(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
