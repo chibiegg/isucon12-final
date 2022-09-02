@@ -32,7 +32,7 @@ function init () {
 			--port "$ISUCON_DB_PORT" \
 			"$ISUCON_DB_NAME" < 6_id_generator_init.sql
 
-	echo "delete from user_presents where id > 100000000000" | mysql -u"$ISUCON_DB_USER" \
+	echo "delete from user_presents where id > 10000000000" | mysql -u"$ISUCON_DB_USER" \
 			-p"$ISUCON_DB_PASSWORD" \
 			--host "$CURRENT_HOST" \
 			--port "$ISUCON_DB_PORT" \
