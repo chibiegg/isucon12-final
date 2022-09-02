@@ -233,7 +233,8 @@ func main() {
 
 	err = initializeLocalCache(dbx1, h)
 	if err != nil {
-		e.Logger.Fatalf("failed to init local cache: %v", err)
+
+		e.Logger.Fatalf("failed to init local cache. err=%+v", errors.WithStack(err))
 	}
 
 	// setting server
