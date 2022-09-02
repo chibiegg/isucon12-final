@@ -38,16 +38,15 @@ function init () {
 			--port "$ISUCON_DB_PORT" \
 			"$ISUCON_DB_NAME"
 
-	DIR=`mysql -u"$ISUCON_DB_USER" -p"$ISUCON_DB_PASSWORD" -h "$CURRENT_HOST" -Ns -e "show variables like 'secure_file_priv'" | cut -f2`
-	SECURE_DIR=${DIR:-/var/lib/mysql-files/}
+	# DIR=`mysql -u"$ISUCON_DB_USER" -p"$ISUCON_DB_PASSWORD" -h "$CURRENT_HOST" -Ns -e "show variables like 'secure_file_priv'" | cut -f2`
+	# SECURE_DIR=${DIR:-/var/lib/mysql-files/}
+	# sudo cp 5_user_presents_not_receive_data.tsv ${SECURE_DIR}
 
-	sudo cp 5_user_presents_not_receive_data.tsv ${SECURE_DIR}
-
-	echo "LOAD DATA INFILE '${SECURE_DIR}5_user_presents_not_receive_data.tsv' REPLACE INTO TABLE user_presents FIELDS ESCAPED BY '|' IGNORE 1 LINES ;" | mysql -u"$ISUCON_DB_USER" \
-			-p"$ISUCON_DB_PASSWORD" \
-			--host "$CURRENT_HOST" \
-			--port "$ISUCON_DB_PORT" \
-			"$ISUCON_DB_NAME" 
+	# echo "LOAD DATA INFILE '${SECURE_DIR}5_user_presents_not_receive_data.tsv' REPLACE INTO TABLE user_presents FIELDS ESCAPED BY '|' IGNORE 1 LINES ;" | mysql -u isucon \
+	# 		-p "$ISUCON_DB_PASSWORD" \
+	# 		--host "$" \
+	# 		--port "$ISUCON_DB_PORT" \
+	# 		"$ISUCON_DB_NAME" 
 }
 
 
