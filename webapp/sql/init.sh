@@ -29,15 +29,13 @@ function init () {
 			-p"$ISUCON_DB_PASSWORD" \
 			--host "$CURRENT_HOST" \
 			--port "$ISUCON_DB_PORT" \
-			"$ISUCON_DB_NAME" < 6_id_generator_init.sql
+			"$ISUCON_DB_NAME" < 6_id_generator_init.sql || true # DB3 doesn't have id_generator. Ignoring the error by `|| true` 
 
 	echo "delete from user_presents where id > 100000000000" | mysql -u"$ISUCON_DB_USER" \
 			-p"$ISUCON_DB_PASSWORD" \
 			--host "$CURRENT_HOST" \
 			--port "$ISUCON_DB_PORT" \
 			"$ISUCON_DB_NAME"
-
-	echo "$CURRENT_HOST is done!"
 
 	# DIR=`mysql -u"$ISUCON_DB_USER" -p"$ISUCON_DB_PASSWORD" -h "$CURRENT_HOST" -Ns -e "show variables like 'secure_file_priv'" | cut -f2`
 	# SECURE_DIR=${DIR:-/var/lib/mysql-files/}
