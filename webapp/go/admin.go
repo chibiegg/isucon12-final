@@ -615,6 +615,10 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
+	versionMasterMutex.Lock()
+	versionMasterValue = activeMaster.ID
+	versionMasterMutex.Unlock()
+
 	return successResponse(c, &AdminUpdateMasterResponse{
 		VersionMaster: activeMaster,
 	})
