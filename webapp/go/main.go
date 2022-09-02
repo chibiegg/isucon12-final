@@ -69,6 +69,8 @@ var versionMasterValue int64
 var sessionMutex sync.RWMutex
 var sessionIdMap map[string]*Session
 var sessionUserIdToFreshSessionId map[int64]string
+var userDeviceMutex sync.RWMutex
+var userDeviceMap map[int64]*UserDevice
 
 func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 	if err := loadIdGenerator2(dbx); err != nil {
@@ -83,6 +85,9 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 		return err
 	}
 	if err := loadSession(h); err != nil {
+		return err
+	}
+	if err := loadUserDevice(h); err != nil {
 		return err
 	}
 
@@ -170,6 +175,22 @@ func loadSession(h *Handler) error {
 		for _, session := range sessions {
 			sessionIdMap[session.SessionID] = session
 			sessionUserIdToFreshSessionId[session.UserID] = session.SessionID
+		}
+	}
+
+	return nil
+}
+
+func loadUserDevice(h *Handler) error {
+	userDeviceMutex.Lock()
+	defer userDeviceMutex.Unlock()
+
+	userDeviceMap = map[int64]*UserDevice{}
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		userDevices := make([]*UserDevice, 0)
+		db.Select(&userDevices, "SELECT * FROM user_devices")
+		for _, device := range userDevices {
+			userDeviceMap[device.UserID] = device
 		}
 	}
 
@@ -466,16 +487,12 @@ func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, r
 
 // checkViewerID
 func (h *Handler) checkViewerID(userID int64, viewerID string) error {
-	query := "SELECT * FROM user_devices WHERE user_id=? AND platform_id=?"
-	device := new(UserDevice)
+	userDeviceMutex.RLock()
+	userDevice, found := userDeviceMap[userID]
+	userDeviceMutex.RUnlock()
 
-	db := h.getDatabaseForUserID(userID)
-
-	if err := db.Get(device, query, userID, viewerID); err != nil {
-		if err == sql.ErrNoRows {
-			return ErrUserDeviceNotFound
-		}
-		return err
+	if !found || userDevice.PlatformID != viewerID {
+		return ErrUserDeviceNotFound
 	}
 
 	return nil
@@ -1030,11 +1047,13 @@ func (h *Handler) createUser(c echo.Context) error {
 		CreatedAt:    requestAt,
 		UpdatedAt:    requestAt,
 	}
-	query = "INSERT INTO user_devices(id, user_id, platform_id, platform_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-	_, err = db.Exec(query, userDevice.ID, user.ID, req.ViewerID, req.PlatformType, requestAt, requestAt)
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	userDeviceMutex.Lock()
+	userDeviceMap[user.ID] = userDevice
+	userDeviceMutex.Unlock()
+	go func() {
+		query = "INSERT INTO user_devices(id, user_id, platform_id, platform_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+		db.Exec(query, userDevice.ID, user.ID, req.ViewerID, req.PlatformType, requestAt, requestAt)
+	}()
 
 	// 初期デッキ付与
 	initCard := new(ItemMaster)
