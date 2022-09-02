@@ -60,20 +60,12 @@ type Handler struct {
 	DB4 *sqlx.DB
 }
 
-/*
-
-DB2のテーブル
-- user_devices
-- present_all_masters
-- user_presents
-- user_present_all_received_history
-
-*/
-
 var userOneTimeTokenMapMutex sync.RWMutex
 var userOneTimeTokenMap map[int64]UserOneTimeToken
+var userBansMapMutex sync.RWMutex
+var userBansMap map[int64]struct{}
 
-func initializeLocalCache(dbx *sqlx.DB) error {
+func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 	res, err := dbx.Exec("UPDATE id_generator2 SET id=LAST_INSERT_ID(id+1000000000000)")
 	if err != nil {
 		return err
@@ -85,6 +77,9 @@ func initializeLocalCache(dbx *sqlx.DB) error {
 
 	clearGachaItemMasterMap()
 	loadUserOneTime()
+	if err := loadUserBans(h); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -116,6 +111,21 @@ func loadUserOneTime() error {
 	userOneTimeTokenMapMutex.Lock()
 	userOneTimeTokenMap = tm
 	userOneTimeTokenMapMutex.Unlock()
+	return nil
+}
+
+func loadUserBans(h *Handler) error {
+	userBansMap = map[int64]struct{}{}
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		userIds := make([]int64, 0)
+		db.Select(&userIds, "SELECT user_id FROM user_bans")
+		userBansMapMutex.Lock()
+		for _, userId := range userIds {
+			userBansMap[userId] = struct{}{}
+		}
+		userBansMapMutex.Unlock()
+	}
+
 	return nil
 }
 
@@ -167,13 +177,6 @@ func main() {
 	}
 	defer dbx2.Close()
 
-	err = initializeLocalCache(dbx1)
-	if err != nil {
-		e.Logger.Fatalf("failed to init local cache: %v", err)
-	}
-
-	// setting server
-	e.Server.Addr = fmt.Sprintf(":%v", "8080")
 	h := &Handler{
 		DB1: dbx1,
 		DB2: dbx2,
@@ -181,11 +184,19 @@ func main() {
 		DB4: dbx4,
 	}
 
+	err = initializeLocalCache(dbx1, h)
+	if err != nil {
+		e.Logger.Fatalf("failed to init local cache: %v", err)
+	}
+
+	// setting server
+	e.Server.Addr = fmt.Sprintf(":%v", "8080")
+
 	// e.Use(middleware.CORS())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{}))
 
 	// utility
-	e.POST("/initialize", initialize)
+	e.POST("/initialize", h.initialize)
 	e.GET("/health", h.health)
 
 	// feature
@@ -444,16 +455,11 @@ func (h *Handler) checkViewerID(userID int64, viewerID string) error {
 
 // checkBan
 func (h *Handler) checkBan(userID int64) (bool, error) {
-	banUser := new(UserBan)
-	query := "SELECT * FROM user_bans WHERE user_id=?"
-	db := h.getDatabaseForUserID(userID)
-	if err := db.Get(banUser, query, userID); err != nil {
-		if err == sql.ErrNoRows {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	userBansMapMutex.RLock()
+	defer userBansMapMutex.RUnlock()
+
+	_, found := userBansMap[userID]
+	return found, nil
 }
 
 // getRequestTime リクエストを受けた時間をコンテキストからunixtimeで取得する
@@ -788,7 +794,7 @@ func (h *Handler) obtainItem(db *sqlx.DB, userID, itemID int64, itemType int, ob
 
 // initialize 初期化処理
 // POST /initialize
-func initialize(c echo.Context) error {
+func (h *Handler) initialize(c echo.Context) error {
 	dbx, err := connectDB1(true) // Masterは1
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -801,7 +807,7 @@ func initialize(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	err = initializeLocalCache(dbx)
+	err = initializeLocalCache(dbx, h)
 	if err != nil {
 		c.Logger().Errorf("failed to init local cache: %v", err)
 		return errorResponse(c, http.StatusInternalServerError, err)

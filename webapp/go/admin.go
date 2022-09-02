@@ -764,10 +764,14 @@ func (h *Handler) adminBanUser(c echo.Context) error {
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-	query = "INSERT user_bans(id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE updated_at = ?"
-	if _, err = db.Exec(query, banID, userID, requestAt, requestAt, requestAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	go func() {
+		query = "INSERT user_bans(id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE updated_at = ?"
+		db.Exec(query, banID, userID, requestAt, requestAt, requestAt)
+	}()
+
+	userBansMapMutex.Lock()
+	userBansMap[userID] = struct{}{}
+	userBansMapMutex.Unlock()
 
 	return successResponse(c, &AdminBanUserResponse{
 		User: user,
