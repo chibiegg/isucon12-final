@@ -74,7 +74,7 @@ var userOneTimeTokenMapMutex sync.RWMutex
 var userOneTimeTokenMap map[int64]UserOneTimeToken
 
 func initializeLocalCache(dbx *sqlx.DB) error {
-	res, err := dbx.Exec("UPDATE id_generator2 SET id=LAST_INSERT_ID(id+100000000000)")
+	res, err := dbx.Exec("UPDATE id_generator2 SET id=LAST_INSERT_ID(id+1000000000000)")
 	if err != nil {
 		return err
 	}
