@@ -45,6 +45,12 @@ function init () {
 	# 		-p "$ISUCON_DB_PASSWORD" \
 	# 		--host "$" \
 	# 		--port "$ISUCON_DB_PORT" \
+	# 		"$ISUCON_DB_NAME"
+
+	# echo "delete from user_presents where user_id % 4 != <value>" | mysql -u"$ISUCON_DB_USER" \
+	# 		-p"$ISUCON_DB_PASSWORD" \
+	# 		--host "$CURRENT_HOST" \
+	# 		--port "$ISUCON_DB_PORT" \
 	# 		"$ISUCON_DB_NAME" 
 }
 
