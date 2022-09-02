@@ -22,6 +22,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 
 	_ "net/http/pprof"
 
@@ -232,7 +233,7 @@ func main() {
 
 	err = initializeLocalCache(dbx1, h)
 	if err != nil {
-		e.Logger.Fatalf("failed to init local cache: %v", err)
+		e.Logger.Fatalf("failed to init local cache. err=%+v", errors.WithStack(err))
 	}
 
 	// setting server
@@ -920,6 +921,22 @@ func (h *Handler) obtainItem(db *sqlx.DB, userID, itemID int64, itemType int, ob
 	return obtainCoins, obtainCards, obtainItems, nil
 }
 
+func deleteUnusedRecords(c echo.Context, mod int, db *sqlx.DB) {
+	c.Logger().Infof("Deleting % 4 == %d records from DB", mod)
+	db.Exec("DELETE FROM user_bans WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_cards WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_decks WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_devices WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_items WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_login_bonues WHERE user_id % 4 != ?", mod)
+	// no records
+	// db.Exec("DELETE FROM user_one_time_tokens WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM user_present_all_received_history WHERE user_id % 4 != ?", mod)
+	// too big so don't clear the records here
+	// db.Exec("DELETE FROM user_presents WHERE user_id % 4 != ?", mod)
+	db.Exec("DELETE FROM users WHERE id % 4 != ?", mod)
+}
+
 // initialize 初期化処理
 // POST /initialize
 func (h *Handler) initialize(c echo.Context) error {
@@ -934,6 +951,15 @@ func (h *Handler) initialize(c echo.Context) error {
 		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
+
+	var eg errgroup.Group
+	for i, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		// bind before passing the go func to `eg.Go`.
+		mod := i
+		localDB := db
+		eg.Go(func() error { deleteUnusedRecords(c, mod, localDB); return nil })
+	}
+	eg.Wait()
 
 	err = initializeLocalCache(dbx, h)
 	if err != nil {
