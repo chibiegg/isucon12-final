@@ -23,10 +23,15 @@ max_binlog_size   = 100M
 # binlog_do_db          = include_database_name
 # binlog_ignore_db      = include_database_name
 
-slow_query_log          = 1
-slow_query_log_file     = /var/log/mysql/mysql-slow.log
-long_query_time = 0.1
-log-queries-not-using-indexes
+#slow_query_log          = 1
+#slow_query_log_file     = /var/log/mysql/mysql-slow.log
+#long_query_time = 0.1
+#log-queries-not-using-indexes
 skip-name-resolve=1
+
+innodb_dedicated_server=1
 innodb_buffer_pool_size=2048M
-innodb_log_file_size = 512M
+innodb_flush_log_at_trx_commit = 2
+innodb_flush_method = O_DIRECT
+#innodb_log_file_size = 512M
+skip_innodb_doublewrite
