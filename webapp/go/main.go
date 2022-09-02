@@ -69,8 +69,14 @@ var versionMasterValue int64
 var sessionMutex sync.RWMutex
 var sessionIdMap map[string]*Session
 var sessionUserIdToFreshSessionId map[int64]string
+
+type UserDeviceMapKey struct {
+	UserID     int64
+	PlatformID string
+}
+
 var userDeviceMutex sync.RWMutex
-var userDeviceMap map[int64]*UserDevice
+var userDeviceMap map[UserDeviceMapKey]*UserDevice
 
 func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 	if err := loadIdGenerator2(dbx); err != nil {
@@ -185,12 +191,12 @@ func loadUserDevice(h *Handler) error {
 	userDeviceMutex.Lock()
 	defer userDeviceMutex.Unlock()
 
-	userDeviceMap = map[int64]*UserDevice{}
+	userDeviceMap = make(map[UserDeviceMapKey]*UserDevice)
 	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
 		userDevices := make([]*UserDevice, 0)
 		db.Select(&userDevices, "SELECT * FROM user_devices")
 		for _, device := range userDevices {
-			userDeviceMap[device.UserID] = device
+			userDeviceMap[UserDeviceMapKey{UserID: device.UserID, PlatformID: device.PlatformID}] = device
 		}
 	}
 
@@ -486,9 +492,9 @@ func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, r
 }
 
 // checkViewerID
-func (h *Handler) checkViewerID1(userID int64, viewerID string) error {
+func (h *Handler) checkViewerID(userID int64, viewerID string) error {
 	userDeviceMutex.RLock()
-	userDevice, found := userDeviceMap[userID]
+	userDevice, found := userDeviceMap[UserDeviceMapKey{UserID: userID, PlatformID: viewerID}]
 	userDeviceMutex.RUnlock()
 
 	if !found || userDevice.PlatformID != viewerID {
@@ -496,35 +502,6 @@ func (h *Handler) checkViewerID1(userID int64, viewerID string) error {
 	}
 
 	return nil
-}
-
-func (h *Handler) checkViewerID2(userID int64, viewerID string) error {
-	query := "SELECT * FROM user_devices WHERE user_id=? AND platform_id=?"
-	device := new(UserDevice)
-
-	db := h.getDatabaseForUserID(userID)
-
-	if err := db.Get(device, query, userID, viewerID); err != nil {
-		if err == sql.ErrNoRows {
-			return ErrUserDeviceNotFound
-		}
-		return err
-	}
-
-	return nil
-}
-
-// checkViewerID
-func (h *Handler) checkViewerID(c echo.Context, userID int64, viewerID string) error {
-
-	res1 := h.checkViewerID1(userID, viewerID)
-	res2 := h.checkViewerID2(userID, viewerID)
-
-	if res1 != res2 {
-		c.Logger().Errorf("result mismatch: %v : %v. userID = %d, viewerID = %s", res1, res2, userID, viewerID)
-	}
-
-	return res2
 }
 
 // checkBan
@@ -1077,7 +1054,7 @@ func (h *Handler) createUser(c echo.Context) error {
 		UpdatedAt:    requestAt,
 	}
 	userDeviceMutex.Lock()
-	userDeviceMap[user.ID] = userDevice
+	userDeviceMap[UserDeviceMapKey{UserID: user.ID, PlatformID: req.ViewerID}] = userDevice
 	userDeviceMutex.Unlock()
 	// go func() {
 	query = "INSERT INTO user_devices(id, user_id, platform_id, platform_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
@@ -1234,7 +1211,7 @@ func (h *Handler) login(c echo.Context) error {
 	}
 
 	// viewer id check
-	if err = h.checkViewerID(c, user.ID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(user.ID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -1501,7 +1478,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -1708,7 +1685,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		return errorResponse(c, http.StatusUnprocessableEntity, fmt.Errorf("presentIds is empty"))
 	}
 
-	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -1927,7 +1904,7 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -2108,7 +2085,7 @@ func (h *Handler) updateDeck(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
@@ -2189,7 +2166,7 @@ func (h *Handler) reward(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	if err = h.checkViewerID(c, userID, req.ViewerID); err != nil {
+	if err = h.checkViewerID(userID, req.ViewerID); err != nil {
 		if err == ErrUserDeviceNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
 		}
