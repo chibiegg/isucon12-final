@@ -259,5 +259,3 @@ CREATE TABLE `admin_users` (
   `deleted_at` bigint default NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-
-ALTER TABLE isucon.user_presents MODIFY COLUMN id BIGINT AUTO_INCREMENT;
