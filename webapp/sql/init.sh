@@ -11,7 +11,6 @@ ISUCON_DB_USER=${ISUCON_DB_USER:-isucon}
 ISUCON_DB_PASSWORD=${ISUCON_DB_PASSWORD:-isucon}
 ISUCON_DB_NAME=${ISUCON_DB_NAME:-isucon}
 
-
 function init () {
 	CURRENT_HOST="$1"
 	mysql -u"$ISUCON_DB_USER" \
@@ -37,6 +36,8 @@ function init () {
 			--host "$CURRENT_HOST" \
 			--port "$ISUCON_DB_PORT" \
 			"$ISUCON_DB_NAME"
+
+	echo "$CURRENT_HOST is done!"
 
 	# DIR=`mysql -u"$ISUCON_DB_USER" -p"$ISUCON_DB_PASSWORD" -h "$CURRENT_HOST" -Ns -e "show variables like 'secure_file_priv'" | cut -f2`
 	# SECURE_DIR=${DIR:-/var/lib/mysql-files/}
