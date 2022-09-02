@@ -1667,6 +1667,10 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		}
 	}
 	h.recordObtainItemResult(obtainItemProgress, db, userID)
+	userMutex.Lock()
+	user := userMap[userID]
+	user.IsuCoin += obtainItemProgress.coins
+	userMutex.Unlock()
 
 	return successResponse(c, &ReceivePresentResponse{
 		UpdatedResources: makeUpdatedResources(requestAt, nil, nil, nil, nil, nil, nil, obtainPresent),
