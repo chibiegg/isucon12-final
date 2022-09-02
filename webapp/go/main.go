@@ -290,7 +290,7 @@ func connectDB4(batch bool) (*sqlx.DB, error) {
 }
 
 func (h *Handler) getDatabaseForUserID(userId int64) *sqlx.DB {
-	return []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4}[userId%4]
+	return []*sqlx.DB{h.DB1, h.DB2, h.DB4}[userId%3]
 }
 
 func (h *Handler) getSessionDatabase(sessionId string) *sqlx.DB {
