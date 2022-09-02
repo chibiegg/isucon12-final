@@ -1674,6 +1674,8 @@ func (h *Handler) receivePresent(c echo.Context) error {
 
 	obtainItemProgress := &ObtainItemProgress{}
 	for i := range obtainPresent {
+		obtainPresent[i].UpdatedAt = requestAt
+		obtainPresent[i].DeletedAt = &requestAt
 		v := obtainPresent[i]
 
 		err = h.obtainItemsConstructing(obtainItemProgress, db, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
