@@ -1690,13 +1690,13 @@ func (h *Handler) drawGacha(c echo.Context) error {
 
 	// バルクインサート
 	if len(presents) > 0 {
-		query = `
-		INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
-		VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)
-		`
-		if _, err := db.NamedExec(query, presents); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
+		go func() {
+			query = `
+			INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
+			VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)
+			`
+			db.NamedExec(query, presents)
+		}()
 	}
 
 	// isuconをへらす
@@ -1825,9 +1825,6 @@ func (h *Handler) receivePresent(c echo.Context) error {
 
 	// user_presents の一括更新
 
-	query = `
-	UPDATE user_presents SET deleted_at=:deleted_at, updated_at=:updated_at WHERE id IN (:id_list)
-	`
 	idList := make([]int64, 0, len(obtainPresent))
 	for _, p := range obtainPresent {
 		idList = append(idList, p.ID)
@@ -1842,11 +1839,14 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	// 次にsqlx.In
 	query, args, _ = sqlx.In(query, args...)
 	query = db.Rebind(query)
-	// 実行
-	_, err = db.Exec(query, args...)
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+
+	go func() {
+		// 実行
+		query = `
+		UPDATE user_presents SET deleted_at=:deleted_at, updated_at=:updated_at WHERE id IN (:id_list)
+		`
+		db.Exec(query, args...)
+	}()
 
 	obtainItemProgress := &ObtainItemProgress{}
 	for i := range obtainPresent {
