@@ -644,24 +644,19 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 	sendLoginBonuses := make([]*UserLoginBonus, 0)
 	obtainItemProgress := &ObtainItemProgress{}
 
-	// userLoginBonusesMutex.RLock()
-	// ulbsBase := userLoginBonusesMap[userID]
-	// userLoginBonusesMutex.RUnlock()
-	// ulbLoginBonusIdmap := map[int64]*UserLoginBonus{}
-	// for _, ulb := range ulbsBase {
-	// 	ulbLoginBonusIdmap[ulb.LoginBonusID] = ulb
-	// }
+	userLoginBonusesMutex.RLock()
+	ulbsBase := userLoginBonusesMap[userID]
+	userLoginBonusesMutex.RUnlock()
+	ulbLoginBonusIdmap := map[int64]*UserLoginBonus{}
+	for _, ulb := range ulbsBase {
+		ulbLoginBonusIdmap[ulb.LoginBonusID] = ulb
+	}
 
-	// newUlbsBase := make([]*UserLoginBonus, 0, len(ulbsBase))
+	newUlbsBase := make([]*UserLoginBonus, 0, len(ulbsBase))
 	for _, bonus := range loginBonuses {
 		// ボーナスの進捗取得
-		userBonus := new(UserLoginBonus)
-		query := "SELECT * FROM user_login_bonuses WHERE user_id=? AND login_bonus_id=?"
-		if err := db.Get(userBonus, query, userID, bonus.ID); err != nil {
-			if err != sql.ErrNoRows {
-				return nil, err
-			}
-
+		userBonus := ulbLoginBonusIdmap[bonus.ID]
+		if userBonus == nil {
 			ubID, err := h.generateID()
 			if err != nil {
 				return nil, err
@@ -677,7 +672,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 			}
 		}
 		// append the bonus regardless of the progress update or not for the consistency
-		// newUlbsBase = append(newUlbsBase, userBonus)
+		newUlbsBase = append(newUlbsBase, userBonus)
 
 		// ボーナス進捗更新
 		if userBonus.LastRewardSequence < bonus.ColumnCount {
@@ -695,7 +690,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 
 		// 今回付与するリソース取得
 		rewardItem := new(LoginBonusRewardMaster)
-		query = "SELECT * FROM login_bonus_reward_masters WHERE login_bonus_id=? AND reward_sequence=?"
+		query := "SELECT * FROM login_bonus_reward_masters WHERE login_bonus_id=? AND reward_sequence=?"
 		if err := db.Get(rewardItem, query, bonus.ID, userBonus.LastRewardSequence); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, ErrLoginBonusRewardNotFound
@@ -709,20 +704,20 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 		sendLoginBonuses = append(sendLoginBonuses, userBonus)
 	}
 
-	query := `
-	INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at)
-	VALUES (:id, :user_id, :login_bonus_id, :last_reward_sequence, :loop_count, :created_at, :updated_at)
-	ON DUPLICATE KEY UPDATE last_reward_sequence=VALUES(last_reward_sequence), loop_count=VALUES(loop_count), updated_at=VALUES(updated_at)
-	`
-	if _, err := db.NamedExec(query, sendLoginBonuses); err != nil {
-		return nil, err
-	}
+	go func() {
+		query := `
+		INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at)
+		VALUES (:id, :user_id, :login_bonus_id, :last_reward_sequence, :loop_count, :created_at, :updated_at)
+		ON DUPLICATE KEY UPDATE last_reward_sequence=VALUES(last_reward_sequence), loop_count=VALUES(loop_count), updated_at=VALUES(updated_at)
+		`
+		db.NamedExec(query, sendLoginBonuses)
+	}()
 
 	h.recordObtainItemResult(obtainItemProgress, db, userID)
 
-	// userLoginBonusesMutex.Lock()
-	// userLoginBonusesMap[userID] = newUlbsBase
-	// userLoginBonusesMutex.Unlock()
+	userLoginBonusesMutex.Lock()
+	userLoginBonusesMap[userID] = newUlbsBase
+	userLoginBonusesMutex.Unlock()
 
 	return sendLoginBonuses, nil
 }
