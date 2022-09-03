@@ -473,9 +473,9 @@ func main() {
 	adminAuthAPI.POST("/admin/user/:userID/ban", h.adminBanUser)
 
 	// e.Logger.Infof("Start server: address=%s", e.Server.Addr)
-	socketFile := "/tmp/app.sock"
+	socketFile := "/tmp/isucon.sock"
 	os.Remove(socketFile)
-	l, err := net.Listen("unix", "/tmp/isucon.sock")
+	l, err := net.Listen("unix", socketFile)
 	if err != nil {
 		e.Logger.Fatal(err)
 	}
