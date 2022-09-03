@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -410,6 +411,12 @@ func insertOrUpdateUserDeck(deck *UserDeck) {
 	userDecksMutex.Unlock()
 }
 
+// // WIP
+// type UserPresentMapKey struct {
+// 	presents []*UserPresent
+// 	sorted   bool
+// }
+
 var userPresentsMutex sync.RWMutex
 var userPresentsMap map[int64][]*UserPresent
 
@@ -419,7 +426,7 @@ func loadUserPresents(h *Handler) error {
 	userPresentsMap = map[int64][]*UserPresent{}
 
 	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
-		userPresents := make([]*UserPresent, 0, 1000000)
+		userPresents := make([]*UserPresent, 0, 2000)
 		if err := db.Select(&userPresents, "SELECT * FROM user_presents WHERE deleted_at IS NULL"); err != nil {
 			return err
 		}
@@ -429,6 +436,84 @@ func loadUserPresents(h *Handler) error {
 	}
 
 	return nil
+}
+
+func insertPresents(presents []*UserPresent) {
+	userPresentsMutex.Lock()
+	for _, up := range presents {
+		userPresentsMap[up.UserID] = append(userPresentsMap[up.UserID], up)
+	}
+	userPresentsMutex.Unlock()
+}
+
+func getPresentsByIds(userID int64, presentIDs []int64) []*UserPresent {
+	userPresentsMutex.RLock()
+	presents := userPresentsMap[userID]
+	userPresentsMutex.RUnlock()
+
+	if presents == nil {
+		return nil
+	}
+
+	mp := map[int64]*UserPresent{}
+	for _, p := range presents {
+		mp[p.ID] = p
+	}
+
+	ret := make([]*UserPresent, 0, len(presentIDs))
+	for _, id := range presentIDs {
+		val := mp[id]
+		if val != nil {
+			ret = append(ret, val)
+		}
+	}
+	return ret
+}
+
+func deletePresentsByIds(userID int64, presentIDs []int64) {
+	userPresentsMutex.RLock()
+	presents := userPresentsMap[userID]
+	userPresentsMutex.RUnlock()
+
+	ngIDs := map[int64]struct{}{}
+	for _, id := range presentIDs {
+		ngIDs[id] = struct{}{}
+	}
+	nwPresents := make([]*UserPresent, 0, len(presents)-len(presentIDs))
+	for _, p := range presents {
+		if _, found := ngIDs[p.ID]; found {
+			continue
+		}
+		nwPresents = append(nwPresents, p)
+	}
+
+	userPresentsMutex.Lock()
+	userPresentsMap[userID] = nwPresents
+	userPresentsMutex.Unlock()
+}
+
+func getPresentSortedByCreatedAt(userID int64, offset int, count int) []*UserPresent {
+	userPresentsMutex.Lock()
+	_presents := userPresentsMap[userID]
+	presents := make([]*UserPresent, len(_presents))
+	copy(presents, _presents)
+	userPresentsMutex.Unlock()
+
+	sort.Slice(presents, func(i, j int) bool {
+		if presents[i].CreatedAt != presents[j].CreatedAt {
+			return presents[i].CreatedAt > presents[j].CreatedAt
+		}
+		return presents[i].ID < presents[j].ID
+	})
+
+	if len(presents) < offset {
+		return nil
+	}
+	right := offset + count
+	if right > len(presents) {
+		right = len(presents)
+	}
+	return presents[offset:right]
 }
 
 func getUser(userID int64) *User {
@@ -957,6 +1042,7 @@ func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*
 
 	// バルクインサート
 	if len(normalPresents) > 0 {
+		insertPresents(obtainPresents)
 		query = `
 	INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
 	VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)
@@ -1703,17 +1789,12 @@ func (h *Handler) drawGacha(c echo.Context) error {
 			CreatedAt:      requestAt,
 			UpdatedAt:      requestAt,
 		}
-		// query = "INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-		// if _, err := db.Exec(query, present.ID, present.UserID, present.SentAt, present.ItemType, present.ItemID, present.Amount, present.PresentMessage, present.CreatedAt, present.UpdatedAt); err != nil {
-		// 	c.Logger().Errorf("error on inserting user_presents: %#v", present)
-		// 	return errorResponse(c, http.StatusInternalServerError, err)
-		// }
-
 		presents = append(presents, present)
 	}
 
 	// バルクインサート
 	if len(presents) > 0 {
+		insertPresents(presents)
 		query = `
 		INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
 		VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)
@@ -1760,19 +1841,21 @@ func (h *Handler) listPresent(c echo.Context) error {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid userID parameter"))
 	}
 
-	db := h.getDatabaseForUserID(userID)
+	// db := h.getDatabaseForUserID(userID)
 
 	offset := PresentCountPerPage * (n - 1)
-	presentList := []*UserPresent{}
-	query := `
-	SELECT * FROM user_presents 
-	WHERE user_id = ? AND deleted_at IS NULL
-	ORDER BY created_at DESC, id
-	LIMIT ? OFFSET ?`
+	// query := `
+	// SELECT * FROM user_presents
+	// WHERE user_id = ? AND deleted_at IS NULL
+	// ORDER BY created_at DESC, id
+	// LIMIT ? OFFSET ?`
 
-	if err = db.Select(&presentList, query, userID, PresentCountPerPage+1, offset); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	presentList := getPresentSortedByCreatedAt(userID, offset, PresentCountPerPage+1)
+
+	// presentList := []*UserPresent{}
+	// if err = db.Select(&presentList, query, userID, PresentCountPerPage+1, offset); err != nil {
+	// 	return errorResponse(c, http.StatusInternalServerError, err)
+	// }
 	isNext := false
 	if len(presentList) > PresentCountPerPage {
 		isNext = true
@@ -1824,15 +1907,17 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	db := h.getDatabaseForUserID(userID)
 
 	// user_presentsに入っているが未取得のプレゼント取得
-	query := "SELECT * FROM user_presents WHERE id IN (?) AND deleted_at IS NULL"
-	query, params, err := sqlx.In(query, req.PresentIDs)
-	if err != nil {
-		return errorResponse(c, http.StatusBadRequest, err)
-	}
-	obtainPresent := []*UserPresent{}
-	if err = db.Select(&obtainPresent, query, params...); err != nil {
-		return errorResponse(c, http.StatusBadRequest, err)
-	}
+	// query := "SELECT * FROM user_presents WHERE id IN (?) AND deleted_at IS NULL"
+	// query, params, err := sqlx.In(query, req.PresentIDs)
+	// if err != nil {
+	// 	return errorResponse(c, http.StatusBadRequest, err)
+	// }
+	// obtainPresent := []*UserPresent{}
+	// if err = db.Select(&obtainPresent, query, params...); err != nil {
+	// 	return errorResponse(c, http.StatusBadRequest, err)
+	// }
+
+	obtainPresent := getPresentsByIds(userID, req.PresentIDs)
 
 	if len(obtainPresent) == 0 {
 		return successResponse(c, &ReceivePresentResponse{
@@ -1843,8 +1928,9 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	// 配布処理
 
 	// user_presents の一括更新
+	deletePresentsByIds(userID, req.PresentIDs)
 
-	query = `
+	query := `
 	UPDATE user_presents SET deleted_at=:deleted_at, updated_at=:updated_at WHERE id IN (:id_list)
 	`
 	idList := make([]int64, 0, len(obtainPresent))
