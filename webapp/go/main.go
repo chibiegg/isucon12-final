@@ -276,6 +276,7 @@ func loadUserLoginBonuses(h *Handler) error {
 func loadLoginBonusRewardMaster(h *Handler) error {
 	loginBonusRewardMasterMutex.Lock()
 	defer loginBonusRewardMasterMutex.Unlock()
+	loginBonusRewardMasterMap = map[LoginBonusRewardMasterMapKey]*LoginBonusRewardMaster{}
 
 	lbrms := make([]*LoginBonusRewardMaster, 0)
 	if err := h.DB1.Select(&lbrms, "SELECT * FROM login_bonus_reward_masters"); err != nil {
