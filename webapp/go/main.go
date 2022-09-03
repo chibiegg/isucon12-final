@@ -78,6 +78,14 @@ var loginBonusMasters []*LoginBonusMaster
 var userLoginBonusesMutex sync.RWMutex
 var userLoginBonusesMap map[int64][]*UserLoginBonus
 
+type LoginBonusRewardMasterMapKey struct {
+	LoginBonusID   int64
+	RewardSequence int
+}
+
+var loginBonusRewardMasterMutex sync.RWMutex
+var loginBonusRewardMasterMap map[LoginBonusRewardMasterMapKey]*LoginBonusRewardMaster
+
 type UserDeviceMapKey struct {
 	UserID     int64
 	PlatformID string
@@ -114,6 +122,9 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 		return err
 	}
 	if err := loadUserLoginBonuses(h); err != nil {
+		return err
+	}
+	if err := loadLoginBonusRewardMaster(h); err != nil {
 		return err
 	}
 
@@ -259,6 +270,21 @@ func loadUserLoginBonuses(h *Handler) error {
 		}
 	}
 
+	return nil
+}
+
+func loadLoginBonusRewardMaster(h *Handler) error {
+	loginBonusRewardMasterMutex.Lock()
+	defer loginBonusRewardMasterMutex.Unlock()
+
+	lbrms := make([]*LoginBonusRewardMaster, 0)
+	if err := h.DB1.Select(&lbrms, "SELECT * FROM login_bonus_reward_masters"); err != nil {
+		return err
+	}
+	for _, lbrm := range lbrms {
+		key := LoginBonusRewardMasterMapKey{LoginBonusID: lbrm.LoginBonusID, RewardSequence: lbrm.RewardSequence}
+		loginBonusRewardMasterMap[key] = lbrm
+	}
 	return nil
 }
 
@@ -690,13 +716,12 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 		userBonus.UpdatedAt = requestAt
 
 		// 今回付与するリソース取得
-		rewardItem := new(LoginBonusRewardMaster)
-		query := "SELECT * FROM login_bonus_reward_masters WHERE login_bonus_id=? AND reward_sequence=?"
-		if err := db.Get(rewardItem, query, bonus.ID, userBonus.LastRewardSequence); err != nil {
-			if err == sql.ErrNoRows {
-				return nil, ErrLoginBonusRewardNotFound
-			}
-			return nil, err
+		rewardItemKey := LoginBonusRewardMasterMapKey{LoginBonusID: userBonus.LoginBonusID, RewardSequence: userBonus.LastRewardSequence}
+		loginBonusMasterMutex.RLock()
+		rewardItem := loginBonusRewardMasterMap[rewardItemKey]
+		loginBonusMasterMutex.RUnlock()
+		if rewardItem == nil {
+			return nil, ErrLoginBonusRewardNotFound
 		}
 
 		if err := h.obtainItemsConstructing(obtainItemProgress, db, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt); err != nil {
