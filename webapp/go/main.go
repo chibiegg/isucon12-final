@@ -131,6 +131,9 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 	if err := loadUserCards(h); err != nil {
 		return err
 	}
+	if err := loadUserDecks(h); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -368,6 +371,40 @@ func updateUserCard(card *UserCard) {
 	userCardsMutex.Lock()
 	userCardsMap[card.ID] = card
 	userCardsMutex.Unlock()
+}
+
+var userDecksMutex sync.RWMutex
+var userDecksMap map[int64]*UserDeck
+
+func loadUserDecks(h *Handler) error {
+	userDecksMutex.Lock()
+	defer userDecksMutex.Unlock()
+	userDecksMap = map[int64]*UserDeck{}
+
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		userDecks := make([]*UserDeck, 0, 1000)
+		if err := db.Select(&userDecks, "SELECT * FROM user_decks WHERE deleted_at IS NULL"); err != nil {
+			return err
+		}
+		for _, ud := range userDecks {
+			userDecksMap[ud.UserID] = ud
+		}
+	}
+
+	return nil
+}
+
+func getUserDeck(userID int64) *UserDeck {
+	userDecksMutex.RLock()
+	ret := userDecksMap[userID]
+	userDecksMutex.RUnlock()
+	return ret
+}
+
+func insertOrUpdateUserDeck(deck *UserDeck) {
+	userDecksMutex.Lock()
+	userDecksMap[deck.UserID] = deck
+	userDecksMutex.Unlock()
 }
 
 func getUser(userID int64) *User {
@@ -1186,10 +1223,11 @@ func (h *Handler) createUser(c echo.Context) error {
 		CreatedAt: requestAt,
 		UpdatedAt: requestAt,
 	}
-	query := "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err := db.Exec(query, initDeck.ID, initDeck.UserID, initDeck.CardID1, initDeck.CardID2, initDeck.CardID3, initDeck.CreatedAt, initDeck.UpdatedAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	go func() {
+		query := "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+		db.Exec(query, initDeck.ID, initDeck.UserID, initDeck.CardID1, initDeck.CardID2, initDeck.CardID3, initDeck.CreatedAt, initDeck.UpdatedAt)
+	}()
+	insertOrUpdateUserDeck(initDeck)
 
 	// ログイン処理
 	user, loginBonuses, presents, err := h.loginProcess(db, user.ID, requestAt)
@@ -2138,11 +2176,6 @@ func (h *Handler) updateDeck(c echo.Context) error {
 	}
 
 	// update data
-	query := "UPDATE user_decks SET updated_at=?, deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-	if _, err = db.Exec(query, requestAt, requestAt, userID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
-
 	udID, err := h.generateID()
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -2156,10 +2189,14 @@ func (h *Handler) updateDeck(c echo.Context) error {
 		CreatedAt: requestAt,
 		UpdatedAt: requestAt,
 	}
-	query = "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-	if _, err := db.Exec(query, newDeck.ID, newDeck.UserID, newDeck.CardID1, newDeck.CardID2, newDeck.CardID3, newDeck.CreatedAt, newDeck.UpdatedAt); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	go func() {
+		query := "UPDATE user_decks SET updated_at=?, deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
+		db.Exec(query, requestAt, requestAt, userID)
+		query = "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+		db.Exec(query, newDeck.ID, newDeck.UserID, newDeck.CardID1, newDeck.CardID2, newDeck.CardID3, newDeck.CreatedAt, newDeck.UpdatedAt)
+	}()
+
+	insertOrUpdateUserDeck(newDeck)
 
 	return successResponse(c, &UpdateDeckResponse{
 		UpdatedResources: makeUpdatedResources(requestAt, nil, nil, nil, []*UserDeck{newDeck}, nil, nil, nil),
@@ -2211,13 +2248,9 @@ func (h *Handler) reward(c echo.Context) error {
 	}
 
 	// 使っているデッキの取得
-	deck := new(UserDeck)
-	query := "SELECT * FROM user_decks WHERE user_id=? AND deleted_at IS NULL"
-	if err = db.Get(deck, query, userID); err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, err)
-		}
-		return errorResponse(c, http.StatusInternalServerError, err)
+	deck := getUserDeck(userID)
+	if deck == nil {
+		return errorResponse(c, http.StatusNotFound, err)
 	}
 
 	cards := getUserCards([]int64{deck.CardID1, deck.CardID2, deck.CardID3})
@@ -2264,17 +2297,11 @@ func (h *Handler) home(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	db := h.getDatabaseForUserID(userID)
+	// db := h.getDatabaseForUserID(userID)
 
 	// 装備情報
-	deck := new(UserDeck)
-	query := "SELECT * FROM user_decks WHERE user_id=? AND deleted_at IS NULL"
-	if err = db.Get(deck, query, userID); err != nil {
-		if err != sql.ErrNoRows {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
-		deck = nil
-	}
+	deck := getUserDeck(userID)
+	// deck can be nil
 
 	// 生産性
 	cards := make([]*UserCard, 0)
