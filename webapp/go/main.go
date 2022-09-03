@@ -791,21 +791,21 @@ func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, r
 
 	userOneTimeTokenMapMutex.Unlock()
 
-	db := h.getDatabaseForUserID(userID)
+	//db := h.getDatabaseForUserID(userID)
 
 	if tk.ExpiredAt < requestAt {
-		go func() {
-			query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
-			db.Exec(query, requestAt, token)
-		}()
+		// go func() {
+		// 	query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
+		// 	db.Exec(query, requestAt, token)
+		// }()
 		return ErrInvalidToken
 	}
 
-	go func() {
-		// 使ったトークンを失効する
-		query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
-		db.Exec(query, requestAt, token)
-	}()
+	// go func() {
+	// 	// 使ったトークンを失効する
+	// 	query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
+	// 	db.Exec(query, requestAt, token)
+	// }()
 
 	return nil
 }
@@ -1564,7 +1564,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	masterDB := h.getMasterDatabase()
+	masterDB := h.getDatabaseForUserID(userID)
 	db := h.getDatabaseForUserID(userID)
 
 	gachaMasterList := []*GachaMaster{}
@@ -1624,12 +1624,12 @@ func (h *Handler) listGacha(c echo.Context) error {
 	userOneTimeTokenMap[userID] = token
 	userOneTimeTokenMapMutex.Unlock()
 
-	go func() {
-		query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-		db.Exec(query, requestAt, userID)
-		query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-		db.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
-	}()
+	// go func() {
+	// 	query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
+	// 	db.Exec(query, requestAt, userID)
+	// 	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	// 	db.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
+	// }()
 
 	return successResponse(c, &ListGachaResponse{
 		OneTimeToken: token.Token,
@@ -1997,12 +1997,12 @@ func (h *Handler) listItem(c echo.Context) error {
 	userOneTimeTokenMap[userID] = token
 	userOneTimeTokenMapMutex.Unlock()
 
-	go func() {
-		query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-		db.Exec(query, requestAt, userID)
-		query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-		db.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
-	}()
+	// go func() {
+	// 	query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
+	// 	db.Exec(query, requestAt, userID)
+	// 	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	// 	db.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
+	// }()
 	return successResponse(c, &ListItemResponse{
 		OneTimeToken: token.Token,
 		Items:        itemList,
