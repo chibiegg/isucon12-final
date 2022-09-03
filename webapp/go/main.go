@@ -101,45 +101,22 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 		return err
 	}
 	clearGachaItemMasterMap()
-	loadUserOneTime(h)
-	if err := loadUserBans(h); err != nil {
-		return err
-	}
-	if err := loadVersionMaster(dbx); err != nil {
-		return err
-	}
-	if err := loadSession(h); err != nil {
-		return err
-	}
-	if err := loadUserDevice(h); err != nil {
-		return err
-	}
-	if err := loadUser(h); err != nil {
-		return err
-	}
-	if err := loadItemMasters(h); err != nil {
-		return err
-	}
-	if err := loadLoginBonusMasters(h); err != nil {
-		return err
-	}
-	if err := loadUserLoginBonuses(h); err != nil {
-		return err
-	}
-	if err := loadLoginBonusRewardMaster(h); err != nil {
-		return err
-	}
-	if err := loadUserCards(h); err != nil {
-		return err
-	}
-	if err := loadUserDecks(h); err != nil {
-		return err
-	}
-	if err := loadUserPresents(h); err != nil {
-		return err
-	}
 
-	return nil
+	var eg errgroup.Group
+	eg.Go(func() error { return loadUserOneTime(h) })
+	eg.Go(func() error { return loadUserBans(h) })
+	eg.Go(func() error { return loadVersionMaster(dbx) })
+	eg.Go(func() error { return loadUserDevice(h) })
+	eg.Go(func() error { return loadUser(h) })
+	eg.Go(func() error { return loadItemMasters(h) })
+	eg.Go(func() error { return loadLoginBonusMasters(h) })
+	eg.Go(func() error { return loadUserLoginBonuses(h) })
+	eg.Go(func() error { return loadLoginBonusRewardMaster(h) })
+	eg.Go(func() error { return loadUserCards(h) })
+	eg.Go(func() error { return loadUserDecks(h) })
+	eg.Go(func() error { return loadUserPresents(h) })
+
+	return eg.Wait()
 }
 
 func loadIdGenerator2(dbx *sqlx.DB) error {
