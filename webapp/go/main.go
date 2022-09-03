@@ -821,22 +821,22 @@ func (h *Handler) recordObtainItemResult(currentItems *ObtainItemProgress, db *s
 		}()
 	}
 	if len(currentItems.cards) > 0 {
-		query := `
-		INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at)
-		VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)
-		`
-		if _, err := db.NamedExec(query, currentItems.cards); err != nil {
-			return err
-		}
+		go func() {
+			query := `
+			INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at)
+			VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)
+			`
+			db.NamedExec(query, currentItems.cards)
+		}()
 	}
 	if len(currentItems.items) > 0 {
-		query := `
-		INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at)
-		VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at)
-		ON DUPLICATE KEY UPDATE amount=amount+VALUES(amount), updated_at=VALUES(updated_at)
-		`
-		if _, err := db.NamedExec(query, currentItems.items); err != nil {
-			return err
+		go func() {
+			query := `
+			INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at)
+			VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at)
+			ON DUPLICATE KEY UPDATE amount=amount+VALUES(amount), updated_at=VALUES(updated_at)
+			`
+			db.NamedExec(query, currentItems.items);
 		}
 	}
 	return nil
@@ -1631,27 +1631,6 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
-
-	// for i := range obtainPresent {
-	// 	if obtainPresent[i].DeletedAt != nil {
-	// 		return errorResponse(c, http.StatusInternalServerError, fmt.Errorf("received present"))
-	// 	}
-
-	// 	obtainPresent[i].UpdatedAt = requestAt
-	// 	obtainPresent[i].DeletedAt = &requestAt
-	// 	v := obtainPresent[i]
-
-	// 	_, _, _, err = h.obtainItem(db, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
-	// 	if err != nil {
-	// 		if err == ErrUserNotFound || err == ErrItemNotFound {
-	// 			return errorResponse(c, http.StatusNotFound, err)
-	// 		}
-	// 		if err == ErrInvalidItemType {
-	// 			return errorResponse(c, http.StatusBadRequest, err)
-	// 		}
-	// 		return errorResponse(c, http.StatusInternalServerError, err)
-	// 	}
-	// }
 
 	obtainItemProgress := &ObtainItemProgress{}
 	for i := range obtainPresent {
