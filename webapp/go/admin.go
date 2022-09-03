@@ -620,6 +620,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 	versionMasterMutex.Unlock()
 
 	loadItemMasters(h)
+	loadLoginBonusMasters(h)
 
 	return successResponse(c, &AdminUpdateMasterResponse{
 		VersionMaster: activeMaster,

@@ -73,6 +73,8 @@ var userMutex sync.RWMutex
 var userMap map[int64]*User
 var itemMasterMutex sync.RWMutex
 var itemMasterMap map[int64]*ItemMaster
+var loginBonusMasterMutex sync.RWMutex
+var loginBonusMasters []*LoginBonusMaster
 
 type UserDeviceMapKey struct {
 	UserID     int64
@@ -104,6 +106,9 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 		return err
 	}
 	if err := loadItemMasters(h); err != nil {
+		return err
+	}
+	if err := loadLoginBonusMasters(h); err != nil {
 		return err
 	}
 
@@ -226,6 +231,14 @@ func loadItemMasters(h *Handler) error {
 		itemMasterMap[im.ID] = im
 	}
 	return nil
+}
+
+func loadLoginBonusMasters(h *Handler) error {
+	loginBonusMasterMutex.Lock()
+	defer loginBonusMasterMutex.Unlock()
+
+	loginBonusMasters = make([]*LoginBonusMaster, 0)
+	return h.DB1.Select(&loginBonusMasters, "SELECT * FROM login_bonus_masters")
 }
 
 func getUser(userID int64) *User {
