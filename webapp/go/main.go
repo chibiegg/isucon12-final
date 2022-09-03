@@ -2254,6 +2254,7 @@ func (h *Handler) reward(c echo.Context) error {
 	if deck == nil {
 		return errorResponse(c, http.StatusNotFound, err)
 	}
+	time.Sleep(5 * time.Millisecond)
 
 	cards := getUserCards([]int64{deck.CardID1, deck.CardID2, deck.CardID3})
 	if len(cards) != 3 {
