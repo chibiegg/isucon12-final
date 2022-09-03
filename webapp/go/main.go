@@ -134,6 +134,9 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 	if err := loadUserDecks(h); err != nil {
 		return err
 	}
+	if err := loadUserPresents(h); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -405,6 +408,27 @@ func insertOrUpdateUserDeck(deck *UserDeck) {
 	userDecksMutex.Lock()
 	userDecksMap[deck.UserID] = deck
 	userDecksMutex.Unlock()
+}
+
+var userPresentsMutex sync.RWMutex
+var userPresentsMap map[int64][]*UserPresent
+
+func loadUserPresents(h *Handler) error {
+	userPresentsMutex.Lock()
+	defer userPresentsMutex.Unlock()
+	userPresentsMap = map[int64][]*UserPresent{}
+
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		userPresents := make([]*UserPresent, 0, 1000000)
+		if err := db.Select(&userPresents, "SELECT * FROM user_presents WHERE deleted_at IS NULL"); err != nil {
+			return err
+		}
+		for _, up := range userPresents {
+			userPresentsMap[up.UserID] = append(userPresentsMap[up.UserID], up)
+		}
+	}
+
+	return nil
 }
 
 func getUser(userID int64) *User {
