@@ -473,7 +473,13 @@ func main() {
 	adminAuthAPI.POST("/admin/user/:userID/ban", h.adminBanUser)
 
 	// e.Logger.Infof("Start server: address=%s", e.Server.Addr)
+	socketFile := "/tmp/app.sock"
+	os.Remove(socketFile)
 	l, err := net.Listen("unix", "/tmp/isucon.sock")
+	if err != nil {
+		e.Logger.Fatal(err)
+	}
+	err = os.Chmod(socketFile, 0777)
 	if err != nil {
 		e.Logger.Fatal(err)
 	}
