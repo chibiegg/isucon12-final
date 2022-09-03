@@ -478,6 +478,7 @@ func main() {
 	// e.Server.Addr = fmt.Sprintf(":%v", "8080")
 
 	// e.Use(middleware.CORS())
+	e.JSONSerializer = &JsonSerializer{}
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{}))
 
 	// utility
