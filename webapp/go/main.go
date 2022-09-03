@@ -836,8 +836,8 @@ func (h *Handler) recordObtainItemResult(currentItems *ObtainItemProgress, db *s
 			VALUES (:id, :user_id, :item_id, :item_type, :amount, :created_at, :updated_at)
 			ON DUPLICATE KEY UPDATE amount=amount+VALUES(amount), updated_at=VALUES(updated_at)
 			`
-			db.NamedExec(query, currentItems.items);
-		}
+			db.NamedExec(query, currentItems.items)
+		}()
 	}
 	return nil
 }
