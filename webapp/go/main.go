@@ -505,6 +505,7 @@ func getUser(userID int64) *User {
 }
 
 func main() {
+
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
 
@@ -516,6 +517,8 @@ func main() {
 	userOneTimeTokenMap = map[int64]UserOneTimeToken{}
 
 	e := echo.New()
+	e.Logger.Debug("main is called.")
+
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
@@ -543,14 +546,14 @@ func main() {
 	if err != nil {
 		e.Logger.Fatalf("failed to connect to db2: %v", err)
 	}
-	defer dbx2.Close()
+	defer dbx3.Close()
 
 	// connect db4
 	dbx4, err := connectDB4(false)
 	if err != nil {
 		e.Logger.Fatalf("failed to connect to db2: %v", err)
 	}
-	defer dbx2.Close()
+	defer dbx4.Close()
 
 	h := &Handler{
 		DB1: dbx1,
@@ -558,6 +561,8 @@ func main() {
 		DB3: dbx3,
 		DB4: dbx4,
 	}
+
+	e.Logger.Debug("connected to DBs.")
 
 	err = initializeLocalCache(e.Logger, h)
 	if err != nil {
