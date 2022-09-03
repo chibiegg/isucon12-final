@@ -75,6 +75,8 @@ var itemMasterMutex sync.RWMutex
 var itemMasterMap map[int64]*ItemMaster
 var loginBonusMasterMutex sync.RWMutex
 var loginBonusMasters []*LoginBonusMaster
+var userLoginBonusesMutex sync.RWMutex
+var userLoginBonusesMap map[int64][]*UserLoginBonus
 
 type UserDeviceMapKey struct {
 	UserID     int64
@@ -109,6 +111,9 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 		return err
 	}
 	if err := loadLoginBonusMasters(h); err != nil {
+		return err
+	}
+	if err := loadUserLoginBonuses(h); err != nil {
 		return err
 	}
 
@@ -239,6 +244,22 @@ func loadLoginBonusMasters(h *Handler) error {
 
 	loginBonusMasters = make([]*LoginBonusMaster, 0)
 	return h.DB1.Select(&loginBonusMasters, "SELECT * FROM login_bonus_masters")
+}
+
+func loadUserLoginBonuses(h *Handler) error {
+	userLoginBonusesMutex.Lock()
+	defer userLoginBonusesMutex.Unlock()
+
+	userLoginBonusesMap = map[int64][]*UserLoginBonus{}
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		ulbs := make([]*UserLoginBonus, 0, 1000)
+		db.Select(&ulbs, "SELECT * FROM user_login_bonuses")
+		for _, ulb := range ulbs {
+			userLoginBonusesMap[ulb.UserID] = append(userLoginBonusesMap[ulb.UserID], ulb)
+		}
+	}
+
+	return nil
 }
 
 func getUser(userID int64) *User {
@@ -604,29 +625,39 @@ func isCompleteTodayLogin(lastActivatedAt, requestAt time.Time) bool {
 		lastActivatedAt.Day() == requestAt.Day()
 }
 
+func selectLoginBonusMasters(requestAt int64) []*LoginBonusMaster {
+	loginBonuses := make([]*LoginBonusMaster, 0)
+	loginBonusMasterMutex.RLock()
+	for _, lbm := range loginBonusMasters {
+		if lbm.StartAt <= requestAt && requestAt <= lbm.EndAt {
+			loginBonuses = append(loginBonuses, lbm)
+		}
+	}
+	loginBonusMasterMutex.RUnlock()
+	return loginBonuses
+}
+
 // obtainLoginBonus
 func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) ([]*UserLoginBonus, error) {
 	// login bonus masterから有効なログインボーナスを取得
-	loginBonuses := make([]*LoginBonusMaster, 0)
-	query := "SELECT * FROM login_bonus_masters WHERE start_at <= ? AND end_at >= ?"
-	if err := db.Select(&loginBonuses, query, requestAt, requestAt); err != nil {
-		return nil, err
-	}
-
+	loginBonuses := selectLoginBonusMasters(requestAt)
 	sendLoginBonuses := make([]*UserLoginBonus, 0)
 	obtainItemProgress := &ObtainItemProgress{}
 
-	for _, bonus := range loginBonuses {
-		initBonus := false
-		// ボーナスの進捗取得
-		userBonus := new(UserLoginBonus)
-		query = "SELECT * FROM user_login_bonuses WHERE user_id=? AND login_bonus_id=?"
-		if err := db.Get(userBonus, query, userID, bonus.ID); err != nil {
-			if err != sql.ErrNoRows {
-				return nil, err
-			}
-			initBonus = true
+	userLoginBonusesMutex.RLock()
+	ulbsBase := userLoginBonusesMap[userID]
+	ulbLoginBonusIdmap := map[int64]*UserLoginBonus{}
+	for _, ulb := range ulbsBase {
+		copiedValue := *ulb
+		ulbLoginBonusIdmap[ulb.LoginBonusID] = &copiedValue
+	}
+	userLoginBonusesMutex.RUnlock()
 
+	newUlbsBase := make([]*UserLoginBonus, 0, len(ulbsBase))
+	for _, bonus := range loginBonuses {
+		// ボーナスの進捗取得
+		userBonus := ulbLoginBonusIdmap[bonus.ID]
+		if userBonus == nil {
 			ubID, err := h.generateID()
 			if err != nil {
 				return nil, err
@@ -641,6 +672,8 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 				UpdatedAt:          requestAt,
 			}
 		}
+		// append the bonus regardless of the progress update or not for the consistency
+		newUlbsBase = append(newUlbsBase, userBonus)
 
 		// ボーナス進捗更新
 		if userBonus.LastRewardSequence < bonus.ColumnCount {
@@ -658,7 +691,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 
 		// 今回付与するリソース取得
 		rewardItem := new(LoginBonusRewardMaster)
-		query = "SELECT * FROM login_bonus_reward_masters WHERE login_bonus_id=? AND reward_sequence=?"
+		query := "SELECT * FROM login_bonus_reward_masters WHERE login_bonus_id=? AND reward_sequence=?"
 		if err := db.Get(rewardItem, query, bonus.ID, userBonus.LastRewardSequence); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, ErrLoginBonusRewardNotFound
@@ -669,23 +702,23 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 		if err := h.obtainItemsConstructing(obtainItemProgress, db, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt); err != nil {
 			return nil, err
 		}
-
-		// 進捗の保存
-		if initBonus {
-			query = "INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-			if _, err := db.Exec(query, userBonus.ID, userBonus.UserID, userBonus.LoginBonusID, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.CreatedAt, userBonus.UpdatedAt); err != nil {
-				return nil, err
-			}
-		} else {
-			query = "UPDATE user_login_bonuses SET last_reward_sequence=?, loop_count=?, updated_at=? WHERE id=?"
-			if _, err := db.Exec(query, userBonus.LastRewardSequence, userBonus.LoopCount, userBonus.UpdatedAt, userBonus.ID); err != nil {
-				return nil, err
-			}
-		}
-
 		sendLoginBonuses = append(sendLoginBonuses, userBonus)
 	}
+
+	go func() {
+		query := `
+		INSERT INTO user_login_bonuses(id, user_id, login_bonus_id, last_reward_sequence, loop_count, created_at, updated_at)
+		VALUES (:id, :user_id, :login_bonus_id, :last_reward_sequence, :loop_count, :created_at, :updated_at)
+		ON DUPLICATE KEY UPDATE last_reward_sequence=VALUES(last_reward_sequence), loop_count=VALUES(loop_count), updated_at=VALUES(updated_at)
+		`
+		db.NamedExec(query, sendLoginBonuses)
+	}()
+
 	h.recordObtainItemResult(obtainItemProgress, db, userID)
+
+	userLoginBonusesMutex.Lock()
+	userLoginBonusesMap[userID] = newUlbsBase
+	userLoginBonusesMutex.Unlock()
 
 	return sendLoginBonuses, nil
 }
