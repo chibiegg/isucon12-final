@@ -1153,13 +1153,13 @@ func (h *Handler) createUser(c echo.Context) error {
 	}
 
 	insertUserCard(initCards)
-	query := `
-	INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at)
-	VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)
-	`
-	if _, err := db.NamedExec(query, initCards); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	go func() {
+		query := `
+		INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at)
+		VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)
+		`
+		db.NamedExec(query, initCards)
+	}()
 
 	deckID, err := h.generateID()
 	if err != nil {
@@ -1174,7 +1174,7 @@ func (h *Handler) createUser(c echo.Context) error {
 		CreatedAt: requestAt,
 		UpdatedAt: requestAt,
 	}
-	query = "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	query := "INSERT INTO user_decks(id, user_id, user_card_id_1, user_card_id_2, user_card_id_3, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
 	if _, err := db.Exec(query, initDeck.ID, initDeck.UserID, initDeck.CardID1, initDeck.CardID2, initDeck.CardID3, initDeck.CreatedAt, initDeck.UpdatedAt); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -1857,10 +1857,6 @@ func (h *Handler) listItem(c echo.Context) error {
 	}
 
 	cardList := getUserCardBasedOnUserID(userID)
-	// query = "SELECT * FROM user_cards WHERE user_id=?"
-	// if err = db.Select(&cardList, query, userID); err != nil {
-	// 	return errorResponse(c, http.StatusInternalServerError, err)
-	// }
 
 	// genearte one time token
 
@@ -1958,19 +1954,6 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	}
 
 	// get target card
-	// card := new(TargetUserCardData)
-	// query := `
-	// SELECT uc.id , uc.user_id , uc.card_id , uc.amount_per_sec , uc.level, uc.total_exp, im.amount_per_sec as 'base_amount_per_sec', im.max_level , im.max_amount_per_sec , im.base_exp_per_level
-	// FROM user_cards as uc
-	// INNER JOIN item_masters as im ON uc.card_id = im.id
-	// WHERE uc.id = ? AND uc.user_id=?
-	// `
-	// if err = db.Get(card, query, cardID, userID); err != nil {
-	// 	if err == sql.ErrNoRows {
-	// 		return errorResponse(c, http.StatusNotFound, err)
-	// 	}
-	// 	return errorResponse(c, http.StatusInternalServerError, err)
-	// }
 	userCard, itemMaster := getTargetUserCardData(cardID, userID)
 	if userCard == nil {
 		return errorResponse(c, http.StatusNotFound, err)
@@ -2024,10 +2007,10 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 
 	// cardのlvと経験値の更新、itemの消費
 	updateUserCard(userCard)
-	query = "UPDATE user_cards SET amount_per_sec=?, level=?, total_exp=?, updated_at=? WHERE id=?"
-	if _, err = db.Exec(query, userCard.AmountPerSec, userCard.Level, userCard.TotalExp, requestAt, userCard.ID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	go func() {
+		query = "UPDATE user_cards SET amount_per_sec=?, level=?, total_exp=?, updated_at=? WHERE id=?"
+		db.Exec(query, userCard.AmountPerSec, userCard.Level, userCard.TotalExp, requestAt, userCard.ID)
+	}()
 
 	query = "UPDATE user_items SET amount=?, updated_at=? WHERE id=?"
 	for _, v := range items {
@@ -2038,13 +2021,6 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 
 	// get response data
 	resultCard := userCard
-	// query = "SELECT * FROM user_cards WHERE id=?"
-	// if err = db.Get(resultCard, query, card.ID); err != nil {
-	// 	if err == sql.ErrNoRows {
-	// 		return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found card"))
-	// 	}
-	// 	return errorResponse(c, http.StatusInternalServerError, err)
-	// }
 	resultItems := make([]*UserItem, 0)
 	for _, v := range items {
 		resultItems = append(resultItems, &UserItem{
@@ -2144,15 +2120,6 @@ func (h *Handler) updateDeck(c echo.Context) error {
 	db := h.getDatabaseForUserID(userID)
 
 	// カード所持情報のバリデーション
-	// query := "SELECT * FROM user_cards WHERE id IN (?)"
-	// query, params, err := sqlx.In(query, req.CardIDs)
-	// if err != nil {
-	// 	return errorResponse(c, http.StatusBadRequest, err)
-	// }
-	// cards := make([]*UserCard, 0)
-	// if err = db.Select(&cards, query, params...); err != nil {
-	// 	return errorResponse(c, http.StatusInternalServerError, err)
-	// }
 	cards := getUserCards(req.CardIDs)
 	if len(cards) != DeckCardNumber {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid card ids"))
@@ -2242,10 +2209,6 @@ func (h *Handler) reward(c echo.Context) error {
 	}
 
 	cards := getUserCards([]int64{deck.CardID1, deck.CardID2, deck.CardID3})
-	// query = "SELECT * FROM user_cards WHERE id IN (?, ?, ?)"
-	// if err = db.Select(&cards, query, deck.CardID1, deck.CardID2, deck.CardID3); err != nil {
-	// 	return errorResponse(c, http.StatusInternalServerError, err)
-	// }
 	if len(cards) != 3 {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid cards length"))
 	}
@@ -2306,13 +2269,6 @@ func (h *Handler) home(c echo.Context) error {
 	if deck != nil {
 		cardIds := []int64{deck.CardID1, deck.CardID2, deck.CardID3}
 		cards = getUserCards(cardIds)
-		// query, params, err := sqlx.In("SELECT * FROM user_cards WHERE id IN (?)", cardIds)
-		// if err != nil {
-		// 	return errorResponse(c, http.StatusInternalServerError, err)
-		// }
-		// if err = db.Select(&cards, query, params...); err != nil {
-		// 	return errorResponse(c, http.StatusInternalServerError, err)
-		// }
 	}
 	totalAmountPerSec := 0
 	for _, v := range cards {
