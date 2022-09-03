@@ -1030,15 +1030,12 @@ func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*
 	// バルクインサート
 	if len(normalPresents) > 0 {
 		insertPresents(obtainPresents)
-		query = `
-	INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
-	VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)
-	`
-		if _, err := db.NamedExec(
-			query, obtainPresents,
-		); err != nil {
-			return nil, err
-		}
+		go func() {
+			query = `
+				INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
+				VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)`
+			db.NamedExec(query, obtainPresents)
+		}()
 
 		query = `
 	INSERT INTO user_present_all_received_history(id, user_id, present_all_id, received_at, created_at, updated_at)
@@ -1782,13 +1779,13 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	// バルクインサート
 	if len(presents) > 0 {
 		insertPresents(presents)
-		query = `
-		INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
-		VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)
-		`
-		if _, err := db.NamedExec(query, presents); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
+		go func() {
+			query = `
+			INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
+			VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)
+			`
+			db.NamedExec(query, presents)
+		}()
 	}
 
 	// isuconをへらす
@@ -1828,21 +1825,8 @@ func (h *Handler) listPresent(c echo.Context) error {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid userID parameter"))
 	}
 
-	// db := h.getDatabaseForUserID(userID)
-
 	offset := PresentCountPerPage * (n - 1)
-	// query := `
-	// SELECT * FROM user_presents
-	// WHERE user_id = ? AND deleted_at IS NULL
-	// ORDER BY created_at DESC, id
-	// LIMIT ? OFFSET ?`
-
 	presentList := getPresentSortedByCreatedAt(userID, offset, PresentCountPerPage+1)
-
-	// presentList := []*UserPresent{}
-	// if err = db.Select(&presentList, query, userID, PresentCountPerPage+1, offset); err != nil {
-	// 	return errorResponse(c, http.StatusInternalServerError, err)
-	// }
 	isNext := false
 	if len(presentList) > PresentCountPerPage {
 		isNext = true
@@ -1894,16 +1878,6 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	db := h.getDatabaseForUserID(userID)
 
 	// user_presentsに入っているが未取得のプレゼント取得
-	// query := "SELECT * FROM user_presents WHERE id IN (?) AND deleted_at IS NULL"
-	// query, params, err := sqlx.In(query, req.PresentIDs)
-	// if err != nil {
-	// 	return errorResponse(c, http.StatusBadRequest, err)
-	// }
-	// obtainPresent := []*UserPresent{}
-	// if err = db.Select(&obtainPresent, query, params...); err != nil {
-	// 	return errorResponse(c, http.StatusBadRequest, err)
-	// }
-
 	obtainPresent := getPresentsByIds(userID, req.PresentIDs)
 
 	if len(obtainPresent) == 0 {
@@ -1935,10 +1909,9 @@ func (h *Handler) receivePresent(c echo.Context) error {
 	query, args, _ = sqlx.In(query, args...)
 	query = db.Rebind(query)
 	// 実行
-	_, err = db.Exec(query, args...)
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	go func() {
+		db.Exec(query, args...)
+	}()
 
 	obtainItemProgress := &ObtainItemProgress{}
 	for i := range obtainPresent {
