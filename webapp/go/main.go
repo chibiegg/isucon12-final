@@ -402,9 +402,9 @@ func getUserDeck(userID int64) *UserDeck {
 }
 
 func insertOrUpdateUserDeck(deck *UserDeck) {
-	userCardsMutex.Lock()
+	userDecksMutex.Lock()
 	userDecksMap[deck.UserID] = deck
-	userCardsMutex.Unlock()
+	userDecksMutex.Unlock()
 }
 
 func getUser(userID int64) *User {
