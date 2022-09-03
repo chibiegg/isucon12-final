@@ -1565,7 +1565,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 	}
 
 	masterDB := h.getDatabaseForUserID(userID)
-	db := h.getDatabaseForUserID(userID)
+	// db := h.getDatabaseForUserID(userID)
 
 	gachaMasterList := []*GachaMaster{}
 	// After the contest fix: requestAt from the benchmarker is wrong. Ignoring `end_at` to adjust.
