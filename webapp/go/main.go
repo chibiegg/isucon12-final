@@ -127,6 +127,9 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 	if err := loadLoginBonusRewardMaster(h); err != nil {
 		return err
 	}
+	if err := loadUserCards(h); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -249,6 +252,13 @@ func loadItemMasters(h *Handler) error {
 	return nil
 }
 
+func getItemMaster(id int64) *ItemMaster {
+	itemMasterMutex.RLock()
+	ret := itemMasterMap[id]
+	itemMasterMutex.RUnlock()
+	return ret
+}
+
 func loadLoginBonusMasters(h *Handler) error {
 	loginBonusMasterMutex.Lock()
 	defer loginBonusMasterMutex.Unlock()
@@ -287,6 +297,76 @@ func loadLoginBonusRewardMaster(h *Handler) error {
 		loginBonusRewardMasterMap[key] = lbrm
 	}
 	return nil
+}
+
+var userCardsMutex sync.RWMutex
+var userCardsMap map[int64]*UserCard
+var userCardsUserIDtoIDMap map[int64][]int64
+
+func loadUserCards(h *Handler) error {
+	userCardsMutex.Lock()
+	defer userCardsMutex.Unlock()
+	userCardsMap = map[int64]*UserCard{}
+	userCardsUserIDtoIDMap = map[int64][]int64{}
+
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		userCards := make([]*UserCard, 0, 10000)
+		if err := db.Select(&userCards, "SELECT * FROM user_cards"); err != nil {
+			return err
+		}
+		for _, uc := range userCards {
+			userCardsMap[uc.ID] = uc
+			userCardsUserIDtoIDMap[uc.UserID] = append(userCardsUserIDtoIDMap[uc.UserID], uc.ID)
+		}
+	}
+
+	return nil
+}
+
+func getUserCard(ID int64) *UserCard {
+	userCardsMutex.RLock()
+	ret := userCardsMap[ID]
+	userCardsMutex.RUnlock()
+	return ret
+}
+
+func getUserCards(IDs []int64) []*UserCard {
+	ret := make([]*UserCard, 0, len(IDs))
+	userCardsMutex.RLock()
+	for _, id := range IDs {
+		val := userCardsMap[id]
+		if val != nil {
+			ret = append(ret, userCardsMap[id])
+		}
+	}
+	userCardsMutex.RUnlock()
+	return ret
+}
+
+func getUserCardBasedOnUserID(userID int64) []*UserCard {
+	userCardsMutex.RLock()
+	ids := userCardsUserIDtoIDMap[userID]
+	ret := make([]*UserCard, 0, len(ids))
+	for _, id := range ids {
+		ret = append(ret, userCardsMap[id])
+	}
+	userCardsMutex.RUnlock()
+	return ret
+}
+
+func insertUserCard(cards []*UserCard) {
+	userCardsMutex.Lock()
+	for _, u := range cards {
+		userCardsMap[u.ID] = u
+		userCardsUserIDtoIDMap[u.UserID] = append(userCardsUserIDtoIDMap[u.UserID], u.ID)
+	}
+	userCardsMutex.Unlock()
+}
+
+func updateUserCard(card *UserCard) {
+	userCardsMutex.Lock()
+	userCardsMap[card.ID] = card
+	userCardsMutex.Unlock()
 }
 
 func getUser(userID int64) *User {
@@ -839,7 +919,7 @@ func (h *Handler) obtainItemsConstructing(currentItems *ObtainItemProgress, db *
 		currentItems.coins += obtainAmount
 
 	case 2: // card(ハンマー)
-		item := itemMasterMap[itemID]
+		item := getItemMaster(itemID)
 		if item == nil || item.ItemType != itemType {
 			return ErrItemNotFound
 		}
@@ -858,7 +938,7 @@ func (h *Handler) obtainItemsConstructing(currentItems *ObtainItemProgress, db *
 		currentItems.cards = append(currentItems.cards, card)
 
 	case 3, 4: // 強化素材
-		item := itemMasterMap[itemID]
+		item := getItemMaster(itemID)
 		if item == nil || item.ItemType != itemType {
 			return ErrItemNotFound
 		}
@@ -904,6 +984,7 @@ func (h *Handler) recordObtainItemResult(currentItems *ObtainItemProgress, db *s
 		}()
 	}
 	if len(currentItems.cards) > 0 {
+		insertUserCard(currentItems.cards)
 		go func() {
 			query := `
 			INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at)
@@ -1047,7 +1128,7 @@ func (h *Handler) createUser(c echo.Context) error {
 	}()
 
 	// 初期デッキ付与
-	initCard := itemMasterMap[int64(2)]
+	initCard := getItemMaster(2)
 	if initCard == nil {
 		return errorResponse(c, http.StatusNotFound, ErrItemNotFound)
 	}
@@ -1068,12 +1149,17 @@ func (h *Handler) createUser(c echo.Context) error {
 			CreatedAt:    requestAt,
 			UpdatedAt:    requestAt,
 		}
-		query := "INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-		if _, err := db.Exec(query, card.ID, card.UserID, card.CardID, card.AmountPerSec, card.Level, card.TotalExp, card.CreatedAt, card.UpdatedAt); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
 		initCards = append(initCards, card)
 	}
+
+	insertUserCard(initCards)
+	go func() {
+		query := `
+		INSERT INTO user_cards(id, user_id, card_id, amount_per_sec, level, total_exp, created_at, updated_at)
+		VALUES (:id, :user_id, :card_id, :amount_per_sec, :level, :total_exp, :created_at, :updated_at)
+		`
+		db.NamedExec(query, initCards)
+	}()
 
 	deckID, err := h.generateID()
 	if err != nil {
@@ -1770,11 +1856,7 @@ func (h *Handler) listItem(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	cardList := make([]*UserCard, 0)
-	query = "SELECT * FROM user_cards WHERE user_id=?"
-	if err = db.Select(&cardList, query, userID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	cardList := getUserCardBasedOnUserID(userID)
 
 	// genearte one time token
 
@@ -1861,28 +1943,29 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 
 	db := h.getDatabaseForUserID(userID)
 
-	// get target card
-	card := new(TargetUserCardData)
-	query := `
-	SELECT uc.id , uc.user_id , uc.card_id , uc.amount_per_sec , uc.level, uc.total_exp, im.amount_per_sec as 'base_amount_per_sec', im.max_level , im.max_amount_per_sec , im.base_exp_per_level
-	FROM user_cards as uc
-	INNER JOIN item_masters as im ON uc.card_id = im.id
-	WHERE uc.id = ? AND uc.user_id=?
-	`
-	if err = db.Get(card, query, cardID, userID); err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, err)
+	getTargetUserCardData := func(userCardID int64, userID int64) (*UserCard, *ItemMaster) {
+		userCard := getUserCard(userCardID)
+		if userCard == nil {
+			return nil, nil
 		}
-		return errorResponse(c, http.StatusInternalServerError, err)
+		itemMaster := getItemMaster(userCard.CardID)
+		copiedUserCard := *userCard
+		return &copiedUserCard, itemMaster
 	}
 
-	if card.Level == card.MaxLevel {
+	// get target card
+	userCard, itemMaster := getTargetUserCardData(cardID, userID)
+	if userCard == nil {
+		return errorResponse(c, http.StatusNotFound, err)
+	}
+
+	if userCard.Level == *itemMaster.MaxLevel {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("target card is max level"))
 	}
 
 	// 消費アイテムの所持チェック
 	items := make([]*ConsumeUserItemData, 0)
-	query = `
+	query := `
 	SELECT ui.id, ui.user_id, ui.item_id, ui.item_type, ui.amount, ui.created_at, ui.updated_at, im.gained_exp
 	FROM user_items as ui
 	INNER JOIN item_masters as im ON ui.item_id = im.id
@@ -1907,26 +1990,27 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	// 経験値付与
 	// 経験値をカードに付与
 	for _, v := range items {
-		card.TotalExp += v.GainedExp * v.ConsumeAmount
+		userCard.TotalExp += int64(v.GainedExp * v.ConsumeAmount)
 	}
 
 	// lvup判定(lv upしたら生産性を加算)
 	for {
-		nextLvThreshold := int(float64(card.BaseExpPerLevel) * math.Pow(1.2, float64(card.Level-1)))
-		if nextLvThreshold > card.TotalExp {
+		nextLvThreshold := int(float64(*itemMaster.BaseExpPerLevel) * math.Pow(1.2, float64(userCard.Level-1)))
+		if int64(nextLvThreshold) > userCard.TotalExp {
 			break
 		}
 
 		// lv up処理
-		card.Level += 1
-		card.AmountPerSec += (card.MaxAmountPerSec - card.BaseAmountPerSec) / (card.MaxLevel - 1)
+		userCard.Level += 1
+		userCard.AmountPerSec += (*itemMaster.MaxAmountPerSec - *itemMaster.AmountPerSec) / (*itemMaster.MaxLevel - 1)
 	}
 
 	// cardのlvと経験値の更新、itemの消費
-	query = "UPDATE user_cards SET amount_per_sec=?, level=?, total_exp=?, updated_at=? WHERE id=?"
-	if _, err = db.Exec(query, card.AmountPerSec, card.Level, card.TotalExp, requestAt, card.ID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	updateUserCard(userCard)
+	go func() {
+		query = "UPDATE user_cards SET amount_per_sec=?, level=?, total_exp=?, updated_at=? WHERE id=?"
+		db.Exec(query, userCard.AmountPerSec, userCard.Level, userCard.TotalExp, requestAt, userCard.ID)
+	}()
 
 	query = "UPDATE user_items SET amount=?, updated_at=? WHERE id=?"
 	for _, v := range items {
@@ -1936,14 +2020,7 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	}
 
 	// get response data
-	resultCard := new(UserCard)
-	query = "SELECT * FROM user_cards WHERE id=?"
-	if err = db.Get(resultCard, query, card.ID); err != nil {
-		if err == sql.ErrNoRows {
-			return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found card"))
-		}
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	resultCard := userCard
 	resultItems := make([]*UserItem, 0)
 	for _, v := range items {
 		resultItems = append(resultItems, &UserItem{
@@ -2043,21 +2120,13 @@ func (h *Handler) updateDeck(c echo.Context) error {
 	db := h.getDatabaseForUserID(userID)
 
 	// カード所持情報のバリデーション
-	query := "SELECT * FROM user_cards WHERE id IN (?)"
-	query, params, err := sqlx.In(query, req.CardIDs)
-	if err != nil {
-		return errorResponse(c, http.StatusBadRequest, err)
-	}
-	cards := make([]*UserCard, 0)
-	if err = db.Select(&cards, query, params...); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	cards := getUserCards(req.CardIDs)
 	if len(cards) != DeckCardNumber {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid card ids"))
 	}
 
 	// update data
-	query = "UPDATE user_decks SET updated_at=?, deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
+	query := "UPDATE user_decks SET updated_at=?, deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
 	if _, err = db.Exec(query, requestAt, requestAt, userID); err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
@@ -2139,11 +2208,7 @@ func (h *Handler) reward(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
-	cards := make([]*UserCard, 0)
-	query = "SELECT * FROM user_cards WHERE id IN (?, ?, ?)"
-	if err = db.Select(&cards, query, deck.CardID1, deck.CardID2, deck.CardID3); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	cards := getUserCards([]int64{deck.CardID1, deck.CardID2, deck.CardID3})
 	if len(cards) != 3 {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid cards length"))
 	}
@@ -2203,13 +2268,7 @@ func (h *Handler) home(c echo.Context) error {
 	cards := make([]*UserCard, 0)
 	if deck != nil {
 		cardIds := []int64{deck.CardID1, deck.CardID2, deck.CardID3}
-		query, params, err := sqlx.In("SELECT * FROM user_cards WHERE id IN (?)", cardIds)
-		if err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
-		if err = db.Select(&cards, query, params...); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
-		}
+		cards = getUserCards(cardIds)
 	}
 	totalAmountPerSec := 0
 	for _, v := range cards {
