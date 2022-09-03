@@ -118,6 +118,7 @@ func initializeLocalCache(log echo.Logger, h *Handler) error {
 	eg.Go(func() error { return loadUserCards(h) })
 	eg.Go(func() error { return loadUserDecks(h) })
 	eg.Go(func() error { return loadUserPresents(h) })
+	eg.Go(func() error { return loadUserPresentAllReceviedHistory(h) })
 
 	log.Debug("initializeLocalCache: Queued all load*** functions. Waiting...")
 
@@ -496,6 +497,54 @@ func getPresentSortedByCreatedAt(userID int64, offset int, count int) []*UserPre
 		right = len(presents)
 	}
 	return presents[offset:right]
+}
+
+var userPresentAllReceviedHistoryMutex sync.RWMutex
+var userPresentAllReceviedHistoryMap map[int64]int64
+
+type UserPresentAllReceivedHistoryPartial struct {
+	UserID       int64 `json:"userId" db:"user_id"`
+	PresentAllID int8  `json:"presentAllId" db:"present_all_id"`
+}
+
+func loadUserPresentAllReceviedHistory(h *Handler) error {
+	userPresentAllReceviedHistoryMutex.Lock()
+	defer userPresentAllReceviedHistoryMutex.Unlock()
+	userPresentAllReceviedHistoryMap = map[int64]int64{}
+
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		tmp := make([]*UserPresentAllReceivedHistoryPartial, 0, 100000)
+		if err := db.Select(&tmp, "SELECT user_id, present_all_id FROM user_present_all_received_history WHERE deleted_at IS NULL"); err != nil {
+			return err
+		}
+		for _, up := range tmp {
+			userPresentAllReceviedHistoryMap[up.UserID] = userPresentAllReceviedHistoryMap[up.UserID] | (int64(1) << int64(up.PresentAllID))
+		}
+	}
+
+	return nil
+}
+
+func getUnusedPresentAllIdsAndAppend(userID int64, presentAlls []*PresentAllMaster) []*PresentAllMaster {
+	userPresentAllReceviedHistoryMutex.RLock()
+	usedMapBitField := userPresentAllReceviedHistoryMap[userID]
+	userPresentAllReceviedHistoryMutex.RUnlock()
+
+	ret := []*PresentAllMaster(nil)
+	for _, p := range presentAlls {
+		if usedMapBitField&(int64(1)<<int64(p.ID)) != 0 {
+			usedMapBitField |= (int64(1) << int64(p.ID))
+			ret = append(ret, p)
+		}
+	}
+
+	if ret != nil {
+		userPresentAllReceviedHistoryMutex.Lock()
+		userPresentAllReceviedHistoryMap[userID] = usedMapBitField
+		userPresentAllReceviedHistoryMutex.Unlock()
+	}
+
+	return ret
 }
 
 func getUser(userID int64) *User {
@@ -977,16 +1026,24 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 
 // obtainPresent プレゼント付与処理
 func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
-	normalPresents := make([]*PresentAllMaster, 0, 50)
-	query := `
-	SELECT m.*
-	FROM present_all_masters m
-	LEFT JOIN user_present_all_received_history h ON m.id = h.present_all_id AND h.user_id=?
-	WHERE h.user_id IS NULL AND registered_start_at <= ? AND registered_end_at >= ?;
-	`
-	if err := db.Select(&normalPresents, query, userID, requestAt, requestAt); err != nil {
+	// normalPresents := make([]*PresentAllMaster, 0, 50)
+	// query := `
+	// SELECT m.*
+	// FROM present_all_masters m
+	// LEFT JOIN user_present_all_received_history h ON m.id = h.present_all_id AND h.user_id=?
+	// WHERE h.user_id IS NULL AND registered_start_at <= ? AND registered_end_at >= ?;
+	// `
+	// if err := db.Select(&normalPresents, query, userID, requestAt, requestAt); err != nil {
+	// 	return nil, err
+	// }
+
+	query := "SELECT * FROM present_all_masters WHERE registered_start_at <= ? AND registered_end_at >= ?"
+	normalPresentCaondidates := make([]*PresentAllMaster, 0, 50)
+	if err := db.Select(&normalPresentCaondidates, query, requestAt, requestAt); err != nil {
 		return nil, err
 	}
+
+	normalPresents := getUnusedPresentAllIdsAndAppend(userID, normalPresentCaondidates)
 
 	// 全員プレゼント取得情報更新
 	obtainPresents := make([]*UserPresent, 0, len(normalPresents))
@@ -1037,6 +1094,7 @@ func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*
 			db.NamedExec(query, obtainPresents)
 		}()
 
+		// already inserted received presents in getUnusedPresentAllIdsAndAppend
 		query = `
 	INSERT INTO user_present_all_received_history(id, user_id, present_all_id, received_at, created_at, updated_at)
 	VALUES (:id, :user_id, :present_all_id, :received_at, :created_at, :updated_at)
