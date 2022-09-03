@@ -108,6 +108,7 @@ func initializeLocalCache(log echo.Logger, h *Handler) error {
 	eg.Go(func() error { return loadUserOneTime(h) })
 	eg.Go(func() error { return loadUserBans(h) })
 	eg.Go(func() error { return loadVersionMaster(h.DB1) })
+	eg.Go(func() error { return loadSession(h) })
 	eg.Go(func() error { return loadUserDevice(h) })
 	eg.Go(func() error { return loadUser(h) })
 	eg.Go(func() error { return loadItemMasters(h) })
