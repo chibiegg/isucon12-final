@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -437,7 +438,7 @@ func main() {
 	}
 
 	// setting server
-	e.Server.Addr = fmt.Sprintf(":%v", "8080")
+	// e.Server.Addr = fmt.Sprintf(":%v", "8080")
 
 	// e.Use(middleware.CORS())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{}))
@@ -471,7 +472,18 @@ func main() {
 	adminAuthAPI.GET("/admin/user/:userID", h.adminUser)
 	adminAuthAPI.POST("/admin/user/:userID/ban", h.adminBanUser)
 
-	e.Logger.Infof("Start server: address=%s", e.Server.Addr)
+	// e.Logger.Infof("Start server: address=%s", e.Server.Addr)
+	socketFile := "/tmp/isucon.sock"
+	os.Remove(socketFile)
+	l, err := net.Listen("unix", socketFile)
+	if err != nil {
+		e.Logger.Fatal(err)
+	}
+	err = os.Chmod(socketFile, 0777)
+	if err != nil {
+		e.Logger.Fatal(err)
+	}
+	e.Listener = l
 	e.Logger.Error(e.StartServer(e.Server))
 }
 
