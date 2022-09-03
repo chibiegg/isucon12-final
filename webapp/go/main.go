@@ -96,16 +96,18 @@ type UserDeviceMapKey struct {
 var userDeviceMutex sync.RWMutex
 var userDeviceMap map[UserDeviceMapKey]*UserDevice
 
-func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
-	if err := loadIdGenerator2(dbx); err != nil {
+func initializeLocalCache(log echo.Logger, h *Handler) error {
+	if err := loadIdGenerator2(h.DB1); err != nil {
 		return err
 	}
 	clearGachaItemMasterMap()
 
+	log.Debug("initializeLocalCache: Start load*** functions")
+
 	var eg errgroup.Group
 	eg.Go(func() error { return loadUserOneTime(h) })
 	eg.Go(func() error { return loadUserBans(h) })
-	eg.Go(func() error { return loadVersionMaster(dbx) })
+	eg.Go(func() error { return loadVersionMaster(h.DB1) })
 	eg.Go(func() error { return loadUserDevice(h) })
 	eg.Go(func() error { return loadUser(h) })
 	eg.Go(func() error { return loadItemMasters(h) })
@@ -115,6 +117,8 @@ func initializeLocalCache(dbx *sqlx.DB, h *Handler) error {
 	eg.Go(func() error { return loadUserCards(h) })
 	eg.Go(func() error { return loadUserDecks(h) })
 	eg.Go(func() error { return loadUserPresents(h) })
+
+	log.Debug("initializeLocalCache: Queued all load*** functions. Waiting...")
 
 	return eg.Wait()
 }
@@ -555,7 +559,7 @@ func main() {
 		DB4: dbx4,
 	}
 
-	err = initializeLocalCache(dbx1, h)
+	err = initializeLocalCache(e.Logger, h)
 	if err != nil {
 		e.Logger.Fatalf("failed to init local cache. err=%+v", errors.WithStack(err))
 	}
@@ -1183,7 +1187,7 @@ func (h *Handler) initialize(c echo.Context) error {
 	}
 	eg.Wait()
 
-	err = initializeLocalCache(dbx, h)
+	err = initializeLocalCache(c.Logger(), h)
 	if err != nil {
 		c.Logger().Errorf("failed to init local cache: %v", err)
 		return errorResponse(c, http.StatusInternalServerError, err)
