@@ -646,11 +646,12 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 
 	userLoginBonusesMutex.RLock()
 	ulbsBase := userLoginBonusesMap[userID]
-	userLoginBonusesMutex.RUnlock()
 	ulbLoginBonusIdmap := map[int64]*UserLoginBonus{}
 	for _, ulb := range ulbsBase {
-		ulbLoginBonusIdmap[ulb.LoginBonusID] = ulb
+		copiedValue := *ulb
+		ulbLoginBonusIdmap[ulb.LoginBonusID] = &copiedValue
 	}
+	userLoginBonusesMutex.RUnlock()
 
 	newUlbsBase := make([]*UserLoginBonus, 0, len(ulbsBase))
 	for _, bonus := range loginBonuses {
