@@ -619,6 +619,8 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 	versionMasterValue = activeMaster.ID
 	versionMasterMutex.Unlock()
 
+	loadItemMasters(h)
+
 	return successResponse(c, &AdminUpdateMasterResponse{
 		VersionMaster: activeMaster,
 	})
