@@ -623,6 +623,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 	loadLoginBonusMasters(h)
 	loadLoginBonusMasters(h)
 	loadUserPresentAllMaster(h)
+	loadGachaMasters(h)
 
 	return successResponse(c, &AdminUpdateMasterResponse{
 		VersionMaster: activeMaster,
