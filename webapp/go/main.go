@@ -55,6 +55,8 @@ const (
 	SQLDirectory string = "../sql/"
 )
 
+var globalLogger echo.Logger
+
 type Handler struct {
 	logger echo.Logger
 	DB1    *sqlx.DB
@@ -595,6 +597,8 @@ func loadUserItems(h *Handler) error {
 		}
 	}
 
+	h.logger.Errorf("loaded items. %d users have some items.", len(userItemsMap))
+
 	return nil
 }
 
@@ -609,12 +613,16 @@ func getUserItems(userID int64) []*UserItem {
 }
 
 func insertUserItems(userID int64, items []*UserItem) {
+
 	userItemsMutex.Lock()
+
 	tmp := map[int64]*UserItem{}
 	itemsInDB := userItemsMap[userID]
 	for _, i := range userItemsMap[userID] {
 		tmp[i.ItemID] = i
 	}
+	globalLogger.Errorf("current item = %#v", itemsInDB)
+	globalLogger.Errorf("inserting item = %#v", items)
 	updates := make([]*UserItem, 0)
 	for _, i := range items {
 		if val, found := tmp[i.ItemID]; found {
@@ -625,7 +633,9 @@ func insertUserItems(userID int64, items []*UserItem) {
 		}
 	}
 	itemsInDB = append(itemsInDB, updates...)
+	globalLogger.Errorf("new item = %#v", itemsInDB)
 	userItemsMap[userID] = itemsInDB
+
 	userItemsMutex.Unlock()
 }
 
@@ -695,6 +705,7 @@ func main() {
 		DB4:    dbx4,
 		logger: e.Logger,
 	}
+	globalLogger = e.Logger
 
 	e.Logger.Debug("connected to DBs.")
 
