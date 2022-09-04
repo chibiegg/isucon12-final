@@ -56,10 +56,11 @@ const (
 )
 
 type Handler struct {
-	DB1 *sqlx.DB
-	DB2 *sqlx.DB
-	DB3 *sqlx.DB
-	DB4 *sqlx.DB
+	logger echo.Logger
+	DB1    *sqlx.DB
+	DB2    *sqlx.DB
+	DB3    *sqlx.DB
+	DB4    *sqlx.DB
 }
 
 var userOneTimeTokenMapMutex sync.RWMutex
@@ -118,6 +119,8 @@ func initializeLocalCache(log echo.Logger, h *Handler) error {
 	eg.Go(func() error { return loadUserCards(h) })
 	eg.Go(func() error { return loadUserDecks(h) })
 	eg.Go(func() error { return loadUserPresents(h) })
+	eg.Go(func() error { return loadUserPresentAllReceviedHistory(h) })
+	eg.Go(func() error { return loadUserPresentAllMaster(h) })
 
 	log.Debug("initializeLocalCache: Queued all load*** functions. Waiting...")
 
@@ -498,6 +501,81 @@ func getPresentSortedByCreatedAt(userID int64, offset int, count int) []*UserPre
 	return presents[offset:right]
 }
 
+var userPresentAllReceviedHistoryMutex sync.RWMutex
+var userPresentAllReceviedHistoryMap map[int64]int64
+
+type UserPresentAllReceivedHistoryPartial struct {
+	UserID       int64 `json:"userId" db:"user_id"`
+	PresentAllID int8  `json:"presentAllId" db:"present_all_id"`
+}
+
+func loadUserPresentAllReceviedHistory(h *Handler) error {
+	userPresentAllReceviedHistoryMutex.Lock()
+	defer userPresentAllReceviedHistoryMutex.Unlock()
+	userPresentAllReceviedHistoryMap = map[int64]int64{}
+
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		tmp := make([]*UserPresentAllReceivedHistoryPartial, 0, 100000)
+		if err := db.Select(&tmp, "SELECT user_id, present_all_id FROM user_present_all_received_history WHERE deleted_at IS NULL"); err != nil {
+			return err
+		}
+		for _, up := range tmp {
+			userPresentAllReceviedHistoryMap[up.UserID] = userPresentAllReceviedHistoryMap[up.UserID] | (int64(1) << int64(up.PresentAllID))
+		}
+	}
+
+	return nil
+}
+
+func getUnusedPresentAllIdsAndAppend(userID int64, presentAlls []*PresentAllMaster) []*PresentAllMaster {
+	userPresentAllReceviedHistoryMutex.RLock()
+	usedMapBitField := userPresentAllReceviedHistoryMap[userID]
+	userPresentAllReceviedHistoryMutex.RUnlock()
+
+	ret := []*PresentAllMaster(nil)
+	for _, p := range presentAlls {
+		if usedMapBitField&(int64(1)<<int64(p.ID)) == 0 {
+			usedMapBitField |= (int64(1) << int64(p.ID))
+			ret = append(ret, p)
+		}
+	}
+
+	if ret != nil {
+		userPresentAllReceviedHistoryMutex.Lock()
+		userPresentAllReceviedHistoryMap[userID] = usedMapBitField
+		userPresentAllReceviedHistoryMutex.Unlock()
+	}
+
+	return ret
+}
+
+var userPresentAllMasterMutex sync.RWMutex
+var userPresentAllMasterMap []*PresentAllMaster
+
+func loadUserPresentAllMaster(h *Handler) error {
+	userPresentAllMasterMutex.Lock()
+	defer userPresentAllMasterMutex.Unlock()
+
+	userPresentAllMasterMap = make([]*PresentAllMaster, 0, 28)
+	if err := h.DB1.Select(&userPresentAllMasterMap, "SELECT * FROM present_all_masters"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getPresentAllMasters(requestAt int64) []*PresentAllMaster {
+	ret := make([]*PresentAllMaster, 0, 30)
+	userPresentAllMasterMutex.RLock()
+	for _, p := range userPresentAllMasterMap {
+		if p.RegisteredStartAt <= requestAt && requestAt <= p.RegisteredEndAt {
+			ret = append(ret, p)
+		}
+	}
+	userPresentAllMasterMutex.RUnlock()
+	return ret
+}
+
 func getUser(userID int64) *User {
 	userMutex.RLock()
 	user := userMap[userID]
@@ -519,6 +597,7 @@ func main() {
 
 	e := echo.New()
 	e.Logger.Debug("main is called.")
+	// e.Logger.SetLevel(gommonLog.WARN)
 
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
@@ -557,10 +636,11 @@ func main() {
 	defer dbx4.Close()
 
 	h := &Handler{
-		DB1: dbx1,
-		DB2: dbx2,
-		DB3: dbx3,
-		DB4: dbx4,
+		DB1:    dbx1,
+		DB2:    dbx2,
+		DB3:    dbx3,
+		DB4:    dbx4,
+		logger: e.Logger,
 	}
 
 	e.Logger.Debug("connected to DBs.")
@@ -842,7 +922,7 @@ func getRequestTime(c echo.Context) (int64, error) {
 }
 
 // loginProcess ログイン処理
-func (h *Handler) loginProcess(db *sqlx.DB, userID int64, requestAt int64) (*User, []*UserLoginBonus, []*UserPresent, error) {
+func (h *Handler) loginProcess(logger echo.Logger, db *sqlx.DB, userID int64, requestAt int64) (*User, []*UserLoginBonus, []*UserPresent, error) {
 	user := getUser(userID)
 	if user == nil {
 		return nil, nil, nil, ErrUserNotFound
@@ -855,7 +935,7 @@ func (h *Handler) loginProcess(db *sqlx.DB, userID int64, requestAt int64) (*Use
 	}
 
 	// 全員プレゼント取得
-	allPresents, err := h.obtainPresent(db, userID, requestAt)
+	allPresents, err := h.obtainPresent(logger, db, userID, requestAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -976,17 +1056,9 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 }
 
 // obtainPresent プレゼント付与処理
-func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
-	normalPresents := make([]*PresentAllMaster, 0, 50)
-	query := `
-	SELECT m.*
-	FROM present_all_masters m
-	LEFT JOIN user_present_all_received_history h ON m.id = h.present_all_id AND h.user_id=?
-	WHERE h.user_id IS NULL AND registered_start_at <= ? AND registered_end_at >= ?;
-	`
-	if err := db.Select(&normalPresents, query, userID, requestAt, requestAt); err != nil {
-		return nil, err
-	}
+func (h *Handler) obtainPresent(logger echo.Logger, db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
+	normalPresentCaondidates := getPresentAllMasters(requestAt)
+	normalPresents := getUnusedPresentAllIdsAndAppend(userID, normalPresentCaondidates)
 
 	// 全員プレゼント取得情報更新
 	obtainPresents := make([]*UserPresent, 0, len(normalPresents))
@@ -1031,21 +1103,20 @@ func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*
 	if len(normalPresents) > 0 {
 		insertPresents(obtainPresents)
 		go func() {
-			query = `
+			query := `
 				INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
 				VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)`
 			db.NamedExec(query, obtainPresents)
 		}()
 
-		query = `
-	INSERT INTO user_present_all_received_history(id, user_id, present_all_id, received_at, created_at, updated_at)
-	VALUES (:id, :user_id, :present_all_id, :received_at, :created_at, :updated_at)
-	`
-		if _, err := db.NamedExec(
-			query, obtainHistories,
-		); err != nil {
-			return nil, err
-		}
+		// already inserted received presents in getUnusedPresentAllIdsAndAppend
+		go func() {
+			query := `
+			INSERT INTO user_present_all_received_history(id, user_id, present_all_id, received_at, created_at, updated_at)
+			VALUES (:id, :user_id, :present_all_id, :received_at, :created_at, :updated_at)
+			`
+			db.NamedExec(query, obtainHistories)
+		}()
 	}
 
 	return obtainPresents, nil
@@ -1325,7 +1396,7 @@ func (h *Handler) createUser(c echo.Context) error {
 	insertOrUpdateUserDeck(initDeck)
 
 	// ログイン処理
-	user, loginBonuses, presents, err := h.loginProcess(db, user.ID, requestAt)
+	user, loginBonuses, presents, err := h.loginProcess(c.Logger(), db, user.ID, requestAt)
 	if err != nil {
 		if err == ErrUserNotFound || err == ErrItemNotFound || err == ErrLoginBonusRewardNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
@@ -1489,7 +1560,7 @@ func (h *Handler) login(c echo.Context) error {
 	}
 
 	// login process
-	user, loginBonuses, presents, err := h.loginProcess(db, req.UserID, requestAt)
+	user, loginBonuses, presents, err := h.loginProcess(c.Logger(), db, req.UserID, requestAt)
 	if err != nil {
 		if err == ErrUserNotFound || err == ErrItemNotFound || err == ErrLoginBonusRewardNotFound {
 			return errorResponse(c, http.StatusNotFound, err)

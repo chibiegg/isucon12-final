@@ -622,6 +622,7 @@ func (h *Handler) adminUpdateMaster(c echo.Context) error {
 	loadItemMasters(h)
 	loadLoginBonusMasters(h)
 	loadLoginBonusMasters(h)
+	loadUserPresentAllMaster(h)
 
 	return successResponse(c, &AdminUpdateMasterResponse{
 		VersionMaster: activeMaster,
