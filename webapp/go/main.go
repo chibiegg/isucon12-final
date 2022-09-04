@@ -55,6 +55,8 @@ const (
 	SQLDirectory string = "../sql/"
 )
 
+var globalLogger echo.Logger
+
 type Handler struct {
 	logger echo.Logger
 	DB1    *sqlx.DB
@@ -121,6 +123,7 @@ func initializeLocalCache(log echo.Logger, h *Handler) error {
 	eg.Go(func() error { return loadUserPresents(h) })
 	eg.Go(func() error { return loadUserPresentAllReceviedHistory(h) })
 	eg.Go(func() error { return loadUserPresentAllMaster(h) })
+	eg.Go(func() error { return loadUserItems(h) })
 
 	log.Debug("initializeLocalCache: Queued all load*** functions. Waiting...")
 
@@ -576,6 +579,63 @@ func getPresentAllMasters(requestAt int64) []*PresentAllMaster {
 	return ret
 }
 
+var userItemsMutex sync.RWMutex
+var userItemsMap map[int64][]*UserItem
+
+func loadUserItems(h *Handler) error {
+	userItemsMutex.Lock()
+	defer userItemsMutex.Unlock()
+
+	userItemsMap = map[int64][]*UserItem{}
+	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
+		tmp := make([]*UserItem, 0, 10000)
+		if err := db.Select(&tmp, "SELECT * FROM user_items"); err != nil {
+			return err
+		}
+		for _, item := range tmp {
+			userItemsMap[item.UserID] = append(userItemsMap[item.UserID], item)
+		}
+	}
+
+	h.logger.Errorf("loaded items. %d users have some items.", len(userItemsMap))
+
+	return nil
+}
+
+func getUserItems(userID int64) []*UserItem {
+	userItemsMutex.RLock()
+	items := userItemsMap[userID]
+	copied := make([]*UserItem, len(items))
+	copy(copied, items)
+	userItemsMutex.RUnlock()
+
+	return copied
+}
+
+func insertUserItems(userID int64, items []*UserItem) {
+
+	userItemsMutex.Lock()
+
+	tmp := map[int64]*UserItem{}
+	itemsInDB := userItemsMap[userID]
+	for _, i := range userItemsMap[userID] {
+		tmp[i.ItemID] = i
+	}
+	updates := make([]*UserItem, 0)
+	for _, i := range items {
+		if val, found := tmp[i.ItemID]; found {
+			val.Amount += i.Amount
+			val.UpdatedAt = i.UpdatedAt
+		} else {
+			updates = append(updates, i)
+		}
+	}
+	itemsInDB = append(itemsInDB, updates...)
+	userItemsMap[userID] = itemsInDB
+
+	userItemsMutex.Unlock()
+}
+
 func getUser(userID int64) *User {
 	userMutex.RLock()
 	user := userMap[userID]
@@ -642,6 +702,7 @@ func main() {
 		DB4:    dbx4,
 		logger: e.Logger,
 	}
+	globalLogger = e.Logger
 
 	e.Logger.Debug("connected to DBs.")
 
@@ -1209,6 +1270,7 @@ func (h *Handler) recordObtainItemResult(currentItems *ObtainItemProgress, db *s
 		}()
 	}
 	if len(currentItems.items) > 0 {
+		insertUserItems(userID, currentItems.items)
 		go func() {
 			query := `
 			INSERT INTO user_items(id, user_id, item_id, item_type, amount, created_at, updated_at)
@@ -2037,11 +2099,7 @@ func (h *Handler) listItem(c echo.Context) error {
 		return errorResponse(c, http.StatusNotFound, ErrUserNotFound)
 	}
 
-	itemList := []*UserItem{}
-	query := "SELECT * FROM user_items WHERE user_id = ?"
-	if err = db.Select(&itemList, query, userID); err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	itemList := getUserItems(userID)
 
 	cardList := getUserCardBasedOnUserID(userID)
 
@@ -2152,19 +2210,43 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 
 	// 消費アイテムの所持チェック
 	items := make([]*ConsumeUserItemData, 0)
-	query := `
-	SELECT ui.id, ui.user_id, ui.item_id, ui.item_type, ui.amount, ui.created_at, ui.updated_at, im.gained_exp
-	FROM user_items as ui
-	INNER JOIN item_masters as im ON ui.item_id = im.id
-	WHERE ui.item_type = 3 AND ui.id=? AND ui.user_id=?
-	`
+	userAllItems := getUserItems(userID)
+	uMap := map[int64]*UserItem{}
+	for _, item := range userAllItems {
+		uMap[item.ID] = item
+	}
+
+	getConsumeUserItemData := func(itemID int64) (*UserItem, *ConsumeUserItemData) {
+		item := uMap[itemID]
+		if item == nil || item.ItemType != 3 {
+			return nil, nil
+		}
+		itemMaster := getItemMaster(item.ItemID)
+
+		return item, &ConsumeUserItemData{
+			ID:        item.ID,
+			UserID:    userID,
+			ItemID:    item.ItemID,
+			ItemType:  item.ItemType,
+			Amount:    item.Amount,
+			CreatedAt: item.CreatedAt,
+			UpdatedAt: item.UpdatedAt,
+			GainedExp: *itemMaster.GainedExp,
+		}
+	}
+
+	// query := `
+	// SELECT ui.id, ui.user_id, ui.item_id, ui.item_type, ui.amount, ui.created_at, ui.updated_at, im.gained_exp
+	// FROM user_items as ui
+	// INNER JOIN item_masters as im ON ui.item_id = im.id
+	// WHERE ui.item_type = 3 AND ui.id=? AND ui.user_id=?
+	// `
+
+	userItems := make([]*UserItem, 0, len(req.Items))
 	for _, v := range req.Items {
-		item := new(ConsumeUserItemData)
-		if err = db.Get(item, query, v.ID, userID); err != nil {
-			if err == sql.ErrNoRows {
-				return errorResponse(c, http.StatusNotFound, err)
-			}
-			return errorResponse(c, http.StatusInternalServerError, err)
+		userItem, item := getConsumeUserItemData(v.ID)
+		if item == nil {
+			return errorResponse(c, http.StatusNotFound, nil)
 		}
 
 		if v.Amount > item.Amount {
@@ -2172,7 +2254,16 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 		}
 		item.ConsumeAmount = v.Amount
 		items = append(items, item)
+		userItems = append(userItems, userItem)
 	}
+
+	// userItemsMutex.Lock()
+	// optimistic update
+	for idx, i := range userItems {
+		i.Amount -= items[idx].Amount
+		i.UpdatedAt = requestAt
+	}
+	// userItemsMutex.Unlock()
 
 	// 経験値付与
 	// 経験値をカードに付与
@@ -2195,16 +2286,17 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	// cardのlvと経験値の更新、itemの消費
 	updateUserCard(userCard)
 	go func() {
-		query = "UPDATE user_cards SET amount_per_sec=?, level=?, total_exp=?, updated_at=? WHERE id=?"
+		query := "UPDATE user_cards SET amount_per_sec=?, level=?, total_exp=?, updated_at=? WHERE id=?"
 		db.Exec(query, userCard.AmountPerSec, userCard.Level, userCard.TotalExp, requestAt, userCard.ID)
 	}()
 
-	query = "UPDATE user_items SET amount=?, updated_at=? WHERE id=?"
-	for _, v := range items {
-		if _, err = db.Exec(query, v.Amount-v.ConsumeAmount, requestAt, v.ID); err != nil {
-			return errorResponse(c, http.StatusInternalServerError, err)
+	go func() {
+		// maybe bulk insert by INSERT ON DUPLICATE
+		query := "UPDATE user_items SET amount=?, updated_at=? WHERE id=?"
+		for _, v := range items {
+			db.Exec(query, v.Amount-v.ConsumeAmount, requestAt, v.ID)
 		}
-	}
+	}()
 
 	// get response data
 	resultCard := userCard
