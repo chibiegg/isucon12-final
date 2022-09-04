@@ -1743,7 +1743,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 	}
 
 	// masterDB := h.getMasterDatabase()
-	db := h.getDatabaseForUserID(userID)
+	// db := h.getDatabaseForUserID(userID)
 
 	gachaMasterList := getGachaMasterAvailbles(requestAt)
 	// // After the contest fix: requestAt from the benchmarker is wrong. Ignoring `end_at` to adjust.
@@ -2134,7 +2134,7 @@ func (h *Handler) listItem(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	db := h.getDatabaseForUserID(userID)
+	// db := h.getDatabaseForUserID(userID)
 
 	user := getUser(userID)
 	if user == nil {
