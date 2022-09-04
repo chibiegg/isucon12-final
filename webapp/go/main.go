@@ -23,7 +23,6 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	gommonLog "github.com/labstack/gommon/log"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
@@ -598,7 +597,7 @@ func main() {
 
 	e := echo.New()
 	e.Logger.Debug("main is called.")
-	e.Logger.SetLevel(gommonLog.WARN)
+	// e.Logger.SetLevel(gommonLog.WARN)
 
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
@@ -1059,9 +1058,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 // obtainPresent プレゼント付与処理
 func (h *Handler) obtainPresent(logger echo.Logger, db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
 	normalPresentCaondidates := getPresentAllMasters(requestAt)
-	logger.Warnf("fetched all presents info from the master. %d records.", len(normalPresentCaondidates))
 	normalPresents := getUnusedPresentAllIdsAndAppend(userID, normalPresentCaondidates)
-	logger.Warnf("get unused presents. %d records remaining.", len(normalPresents))
 
 	// 全員プレゼント取得情報更新
 	obtainPresents := make([]*UserPresent, 0, len(normalPresents))
