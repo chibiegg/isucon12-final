@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -124,6 +123,7 @@ func initializeLocalCache(log echo.Logger, h *Handler) error {
 	eg.Go(func() error { return loadUserPresentAllReceviedHistory(h) })
 	eg.Go(func() error { return loadUserPresentAllMaster(h) })
 	eg.Go(func() error { return loadUserItems(h) })
+	eg.Go(func() error { return loadGachaMasters(h) })
 
 	log.Debug("initializeLocalCache: Queued all load*** functions. Waiting...")
 
@@ -634,6 +634,50 @@ func insertUserItems(userID int64, items []*UserItem) {
 	userItemsMap[userID] = itemsInDB
 
 	userItemsMutex.Unlock()
+}
+
+var gachaMastersMutex sync.RWMutex
+var gachaMastersMap map[int64]*GachaMaster
+var gachaMastersList []*GachaMaster
+
+func loadGachaMasters(h *Handler) error {
+	gachaMastersMutex.Lock()
+	defer gachaMastersMutex.Unlock()
+
+	tmp := make([]*GachaMaster, 0, 40)
+	if err := h.DB1.Select(&tmp, "SELECT * FROM gacha_masters ORDER BY display_order ASC"); err != nil {
+		return err
+	}
+
+	for _, g := range tmp {
+		gachaMastersMap[g.ID] = g
+	}
+	gachaMastersList = tmp
+
+	return nil
+}
+
+func getGachaMaster(ID int64, requestAt int64) *GachaMaster {
+	gachaMastersMutex.RLock()
+	ret := gachaMastersMap[ID]
+	gachaMastersMutex.RUnlock()
+	if ret.StartAt <= requestAt && requestAt <= ret.EndAt {
+		return ret
+	} else {
+		return nil
+	}
+}
+
+func getGachaMasterAvailbles(requestAt int64) []*GachaMaster {
+	gachaMastersMutex.RLock()
+	ret := make([]*GachaMaster, 0, 20)
+	for _, g := range gachaMastersList {
+		if g.StartAt <= requestAt && requestAt <= g.EndAt {
+			ret = append(ret, g)
+		}
+	}
+	gachaMastersMutex.RUnlock()
+	return ret
 }
 
 func getUser(userID int64) *User {
@@ -1697,17 +1741,17 @@ func (h *Handler) listGacha(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	masterDB := h.getMasterDatabase()
+	// masterDB := h.getMasterDatabase()
 	db := h.getDatabaseForUserID(userID)
 
-	gachaMasterList := []*GachaMaster{}
-	// After the contest fix: requestAt from the benchmarker is wrong. Ignoring `end_at` to adjust.
-	query := "SELECT * FROM gacha_masters WHERE start_at <= ? AND end_at >= ? ORDER BY display_order ASC"
-	// query := "SELECT * FROM gacha_masters WHERE start_at <= ? ORDER BY display_order ASC"
-	err = masterDB.Select(&gachaMasterList, query, requestAt, requestAt)
-	if err != nil {
-		return errorResponse(c, http.StatusInternalServerError, err)
-	}
+	gachaMasterList := getGachaMasterAvailbles(requestAt)
+	// // After the contest fix: requestAt from the benchmarker is wrong. Ignoring `end_at` to adjust.
+	// query := "SELECT * FROM gacha_masters WHERE start_at <= ? AND end_at >= ? ORDER BY display_order ASC"
+	// // query := "SELECT * FROM gacha_masters WHERE start_at <= ? ORDER BY display_order ASC"
+	// err = masterDB.Select(&gachaMasterList, query, requestAt, requestAt)
+	// if err != nil {
+	// 	return errorResponse(c, http.StatusInternalServerError, err)
+	// }
 
 	if len(gachaMasterList) == 0 {
 		return successResponse(c, &ListGachaResponse{
@@ -1829,7 +1873,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	consumedCoin := int64(gachaCount * 1000)
 
 	db := h.getDatabaseForUserID(userID)
-	masterDB := h.getMasterDatabase()
+	// masterDB := h.getMasterDatabase()
 
 	// userのisuconが足りるか
 	user := getUser(userID)
@@ -1840,25 +1884,22 @@ func (h *Handler) drawGacha(c echo.Context) error {
 		return errorResponse(c, http.StatusConflict, fmt.Errorf("not enough isucon"))
 	}
 
+	gachaIDint, _ := strconv.Atoi(gachaID)
 	// gachaIDからガチャマスタの取得
-	query := "SELECT * FROM gacha_masters WHERE id=? AND start_at <= ? AND end_at >= ?"
-	gachaInfo := new(GachaMaster)
-	if err = masterDB.Get(gachaInfo, query, gachaID, requestAt, requestAt); err != nil {
-		if sql.ErrNoRows == err {
-			if gachaID == "37" {
-				// After the contest fix: the benchmarker expects to see id = 37 record
-				// DO NOT return error here
-				gachaInfo.Name = "3周年ガチャ"
-			} else {
-				return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found gacha"))
-			}
+	// query := "SELECT * FROM gacha_masters WHERE id=? AND start_at <= ? AND end_at >= ?"
+	gachaInfo := getGachaMaster(int64(gachaIDint), requestAt)
+	if gachaInfo == nil {
+		if gachaID == "37" {
+			// After the contest fix: the benchmarker expects to see id = 37 record
+			// DO NOT return error here
+			gachaInfo = new(GachaMaster)
+			gachaInfo.Name = "3周年ガチャ"
 		} else {
-			return errorResponse(c, http.StatusInternalServerError, err)
+			return errorResponse(c, http.StatusNotFound, fmt.Errorf("not found gacha"))
 		}
 	}
 
 	// gachaItemMasterからアイテムリスト取得
-	gachaIDint, _ := strconv.Atoi(gachaID)
 	gachaItemList, err := h.loadGachaItemMasters(int64(gachaIDint))
 
 	if err != nil {
@@ -1913,7 +1954,7 @@ func (h *Handler) drawGacha(c echo.Context) error {
 	if len(presents) > 0 {
 		insertPresents(presents)
 		go func() {
-			query = `
+			query := `
 			INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
 			VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)
 			`
