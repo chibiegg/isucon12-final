@@ -120,6 +120,7 @@ func initializeLocalCache(log echo.Logger, h *Handler) error {
 	eg.Go(func() error { return loadUserDecks(h) })
 	eg.Go(func() error { return loadUserPresents(h) })
 	eg.Go(func() error { return loadUserPresentAllReceviedHistory(h) })
+	eg.Go(func() error { return loadUserPresentAllMaster(h) })
 
 	log.Debug("initializeLocalCache: Queued all load*** functions. Waiting...")
 
@@ -545,6 +546,33 @@ func getUnusedPresentAllIdsAndAppend(userID int64, presentAlls []*PresentAllMast
 		userPresentAllReceviedHistoryMutex.Unlock()
 	}
 
+	return ret
+}
+
+var userPresentAllMasterMutex sync.RWMutex
+var userPresentAllMasterMap []*PresentAllMaster
+
+func loadUserPresentAllMaster(h *Handler) error {
+	userPresentAllMasterMutex.Lock()
+	defer userPresentAllMasterMutex.Unlock()
+
+	userPresentAllMasterMap := make([]*PresentAllMaster, 0, 30)
+	if err := h.DB1.Select(&userPresentAllMasterMap, "SELECT * FROM present_all_masters"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getPresentAllMasters(requestAt int64) []*PresentAllMaster {
+	ret := make([]*PresentAllMaster, 0, 30)
+	userPresentAllMasterMutex.RLock()
+	for _, p := range userPresentAllMasterMap {
+		if p.RegisteredStartAt <= requestAt && requestAt <= p.RegisteredEndAt {
+			ret = append(ret, p)
+		}
+	}
+	userPresentAllMasterMutex.RUnlock()
 	return ret
 }
 
@@ -1028,23 +1056,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 
 // obtainPresent プレゼント付与処理
 func (h *Handler) obtainPresent(logger echo.Logger, db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
-	// normalPresents := make([]*PresentAllMaster, 0, 50)
-	// query := `
-	// SELECT m.*
-	// FROM present_all_masters m
-	// LEFT JOIN user_present_all_received_history h ON m.id = h.present_all_id AND h.user_id=?
-	// WHERE h.user_id IS NULL AND registered_start_at <= ? AND registered_end_at >= ?;
-	// `
-	// if err := db.Select(&normalPresents, query, userID, requestAt, requestAt); err != nil {
-	// 	return nil, err
-	// }
-
-	query := "SELECT * FROM present_all_masters WHERE registered_start_at <= ? AND registered_end_at >= ?"
-	normalPresentCaondidates := make([]*PresentAllMaster, 0, 50)
-	if err := db.Select(&normalPresentCaondidates, query, requestAt, requestAt); err != nil {
-		return nil, err
-	}
-
+	normalPresentCaondidates := getPresentAllMasters(requestAt)
 	logger.Warnf("fetched all presents info from the master. %d records.", len(normalPresentCaondidates))
 	normalPresents := getUnusedPresentAllIdsAndAppend(userID, normalPresentCaondidates)
 	logger.Warnf("get unused presents. %d records remaining.", len(normalPresents))
@@ -1092,22 +1104,20 @@ func (h *Handler) obtainPresent(logger echo.Logger, db *sqlx.DB, userID int64, r
 	if len(normalPresents) > 0 {
 		insertPresents(obtainPresents)
 		go func() {
-			query = `
+			query := `
 				INSERT INTO user_presents(id, user_id, sent_at, item_type, item_id, amount, present_message, created_at, updated_at)
 				VALUES (:id, :user_id, :sent_at, :item_type, :item_id, :amount, :present_message, :created_at, :updated_at)`
 			db.NamedExec(query, obtainPresents)
 		}()
 
 		// already inserted received presents in getUnusedPresentAllIdsAndAppend
-		query = `
-	INSERT INTO user_present_all_received_history(id, user_id, present_all_id, received_at, created_at, updated_at)
-	VALUES (:id, :user_id, :present_all_id, :received_at, :created_at, :updated_at)
-	`
-		if _, err := db.NamedExec(
-			query, obtainHistories,
-		); err != nil {
-			return nil, err
-		}
+		go func() {
+			query := `
+			INSERT INTO user_present_all_received_history(id, user_id, present_all_id, received_at, created_at, updated_at)
+			VALUES (:id, :user_id, :present_all_id, :received_at, :created_at, :updated_at)
+			`
+			db.NamedExec(query, obtainHistories)
+		}()
 	}
 
 	return obtainPresents, nil
