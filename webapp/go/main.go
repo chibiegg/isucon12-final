@@ -533,7 +533,7 @@ func getUnusedPresentAllIdsAndAppend(userID int64, presentAlls []*PresentAllMast
 
 	ret := []*PresentAllMaster(nil)
 	for _, p := range presentAlls {
-		if usedMapBitField&(int64(1)<<int64(p.ID)) != 0 {
+		if usedMapBitField&(int64(1)<<int64(p.ID)) == 0 {
 			usedMapBitField |= (int64(1) << int64(p.ID))
 			ret = append(ret, p)
 		}
@@ -1045,9 +1045,9 @@ func (h *Handler) obtainPresent(logger echo.Logger, db *sqlx.DB, userID int64, r
 		return nil, err
 	}
 
-	logger.Warn("fetched all presents info from the master. %d records.", len(normalPresentCaondidates))
+	logger.Warnf("fetched all presents info from the master. %d records.", len(normalPresentCaondidates))
 	normalPresents := getUnusedPresentAllIdsAndAppend(userID, normalPresentCaondidates)
-	logger.Warn("get unused presents. %d records remaining.", len(normalPresents))
+	logger.Warnf("get unused presents. %d records remaining.", len(normalPresents))
 
 	// 全員プレゼント取得情報更新
 	obtainPresents := make([]*UserPresent, 0, len(normalPresents))
