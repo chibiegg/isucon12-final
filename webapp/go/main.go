@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -26,8 +25,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	_ "net/http/pprof"
-
-	"github.com/felixge/fgprof"
 )
 
 var (
@@ -693,18 +690,21 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
 
-	http.DefaultServeMux.Handle("/debug/fgprof", fgprof.Handler())
-	go func() {
-		log.Println(http.ListenAndServe(":6060", nil))
-	}()
+	// http.DefaultServeMux.Handle("/debug/fgprof", fgprof.Handler())
+	// go func() {
+	// 	log.Println(http.ListenAndServe(":6060", nil))
+	// }()
 
 	userOneTimeTokenMap = map[int64]UserOneTimeToken{}
 
 	e := echo.New()
 	e.Logger.Debug("main is called.")
-	// e.Logger.SetLevel(gommonLog.WARN)
+	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Output: io.Discard,
+	}))
+	e.Logger.SetLevel(0)
 
-	e.Use(middleware.Logger())
+	// e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"*"},
@@ -977,21 +977,21 @@ func (h *Handler) checkOneTimeToken(token string, userID int64, tokenType int, r
 
 	userOneTimeTokenMapMutex.Unlock()
 
-	db := h.getDatabaseForUserID(userID)
+	// db := h.getDatabaseForUserID(userID)
 
 	if tk.ExpiredAt < requestAt {
-		go func() {
-			query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
-			db.Exec(query, requestAt, token)
-		}()
+		// go func() {
+		// 	query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
+		// 	db.Exec(query, requestAt, token)
+		// }()
 		return ErrInvalidToken
 	}
 
-	go func() {
-		// 使ったトークンを失効する
-		query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
-		db.Exec(query, requestAt, token)
-	}()
+	// go func() {
+	// 	// 使ったトークンを失効する
+	// 	query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE token=?"
+	// 	db.Exec(query, requestAt, token)
+	// }()
 
 	return nil
 }
@@ -1743,7 +1743,7 @@ func (h *Handler) listGacha(c echo.Context) error {
 	}
 
 	// masterDB := h.getMasterDatabase()
-	db := h.getDatabaseForUserID(userID)
+	// db := h.getDatabaseForUserID(userID)
 
 	gachaMasterList := getGachaMasterAvailbles(requestAt)
 	// // After the contest fix: requestAt from the benchmarker is wrong. Ignoring `end_at` to adjust.
@@ -1802,12 +1802,12 @@ func (h *Handler) listGacha(c echo.Context) error {
 	userOneTimeTokenMap[userID] = token
 	userOneTimeTokenMapMutex.Unlock()
 
-	go func() {
-		query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-		db.Exec(query, requestAt, userID)
-		query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-		db.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
-	}()
+	// go func() {
+	// 	query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
+	// 	db.Exec(query, requestAt, userID)
+	// 	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	// 	db.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
+	// }()
 
 	return successResponse(c, &ListGachaResponse{
 		OneTimeToken: token.Token,
@@ -2134,7 +2134,7 @@ func (h *Handler) listItem(c echo.Context) error {
 		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
 	}
 
-	db := h.getDatabaseForUserID(userID)
+	// db := h.getDatabaseForUserID(userID)
 
 	user := getUser(userID)
 	if user == nil {
@@ -2168,12 +2168,12 @@ func (h *Handler) listItem(c echo.Context) error {
 	userOneTimeTokenMap[userID] = token
 	userOneTimeTokenMapMutex.Unlock()
 
-	go func() {
-		query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
-		db.Exec(query, requestAt, userID)
-		query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-		db.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
-	}()
+	// go func() {
+	// 	query := "UPDATE user_one_time_tokens SET deleted_at=? WHERE user_id=? AND deleted_at IS NULL"
+	// 	db.Exec(query, requestAt, userID)
+	// 	query = "INSERT INTO user_one_time_tokens(id, user_id, token, token_type, created_at, updated_at, expired_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	// 	db.Exec(query, token.ID, token.UserID, token.Token, token.TokenType, token.CreatedAt, token.UpdatedAt, token.ExpiredAt)
+	// }()
 	return successResponse(c, &ListItemResponse{
 		OneTimeToken: token.Token,
 		Items:        itemList,
@@ -2644,6 +2644,10 @@ var idGenerator2 int64
 
 // generateID uniqueなIDを生成する
 func (h *Handler) generateID() (int64, error) {
+	return atomic.AddInt64(&idGenerator2, 1), nil
+}
+
+func (h *Handler) generateUserID() (int64, error) {
 	return atomic.AddInt64(&idGenerator2, 1), nil
 }
 
