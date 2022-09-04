@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/felixge/fgprof"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -25,10 +26,6 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
-
-	_ "net/http/pprof"
-
-	"github.com/felixge/fgprof"
 )
 
 var (
@@ -656,10 +653,12 @@ func main() {
 	userOneTimeTokenMap = map[int64]UserOneTimeToken{}
 
 	e := echo.New()
-	e.Logger.Debug("main is called.")
-	// e.Logger.SetLevel(gommonLog.WARN)
+	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Output: io.Discard,
+	}))
+	e.Logger.SetLevel(0)
 
-	e.Use(middleware.Logger())
+	// e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"*"},
@@ -1092,7 +1091,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 			return nil, ErrLoginBonusRewardNotFound
 		}
 
-		if err := h.obtainItemsConstructing(obtainItemProgress, db, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt); err != nil {
+		if err := h.obtainItemsConstructing(obtainItemProgress, userID, rewardItem.ItemID, rewardItem.ItemType, rewardItem.Amount, requestAt); err != nil {
 			return nil, err
 		}
 		sendLoginBonuses = append(sendLoginBonuses, userBonus)
@@ -1189,7 +1188,7 @@ type ObtainItemProgress struct {
 	items []*UserItem
 }
 
-func (h *Handler) obtainItemsConstructing(currentItems *ObtainItemProgress, db *sqlx.DB, userID, itemID int64, itemType int, obtainAmount int64, requestAt int64) error {
+func (h *Handler) obtainItemsConstructing(currentItems *ObtainItemProgress, userID, itemID int64, itemType int, obtainAmount int64, requestAt int64) error {
 	switch itemType {
 	case 1: // coin
 		currentItems.coins += obtainAmount
@@ -2052,7 +2051,7 @@ func (h *Handler) receivePresent(c echo.Context) error {
 		obtainPresent[i].DeletedAt = &requestAt
 		v := obtainPresent[i]
 
-		err = h.obtainItemsConstructing(obtainItemProgress, db, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
+		err = h.obtainItemsConstructing(obtainItemProgress, v.UserID, v.ItemID, v.ItemType, int64(v.Amount), requestAt)
 		if err != nil {
 			if err == ErrUserNotFound || err == ErrItemNotFound {
 				return errorResponse(c, http.StatusNotFound, err)
