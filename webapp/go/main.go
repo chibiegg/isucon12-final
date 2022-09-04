@@ -27,6 +27,8 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	_ "net/http/pprof"
+
+	"github.com/felixge/fgprof"
 )
 
 var (
@@ -586,7 +588,7 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
 
-	// http.DefaultServeMux.Handle("/debug/fgprof", fgprof.Handler())
+	http.DefaultServeMux.Handle("/debug/fgprof", fgprof.Handler())
 	go func() {
 		log.Println(http.ListenAndServe(":6060", nil))
 	}()
