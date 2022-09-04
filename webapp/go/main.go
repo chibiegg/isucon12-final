@@ -584,6 +584,7 @@ func loadUserItems(h *Handler) error {
 	userItemsMutex.Lock()
 	defer userItemsMutex.Unlock()
 
+	userItemsMap = map[int64][]*UserItem{}
 	for _, db := range []*sqlx.DB{h.DB1, h.DB2, h.DB3, h.DB4} {
 		tmp := make([]*UserItem, 0, 10000)
 		if err := db.Select(&tmp, "SELECT * FROM user_items"); err != nil {
