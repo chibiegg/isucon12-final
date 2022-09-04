@@ -891,7 +891,7 @@ func getRequestTime(c echo.Context) (int64, error) {
 }
 
 // loginProcess ログイン処理
-func (h *Handler) loginProcess(db *sqlx.DB, userID int64, requestAt int64) (*User, []*UserLoginBonus, []*UserPresent, error) {
+func (h *Handler) loginProcess(logger echo.Logger, db *sqlx.DB, userID int64, requestAt int64) (*User, []*UserLoginBonus, []*UserPresent, error) {
 	user := getUser(userID)
 	if user == nil {
 		return nil, nil, nil, ErrUserNotFound
@@ -904,7 +904,7 @@ func (h *Handler) loginProcess(db *sqlx.DB, userID int64, requestAt int64) (*Use
 	}
 
 	// 全員プレゼント取得
-	allPresents, err := h.obtainPresent(db, userID, requestAt)
+	allPresents, err := h.obtainPresent(logger, db, userID, requestAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1025,7 +1025,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 }
 
 // obtainPresent プレゼント付与処理
-func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
+func (h *Handler) obtainPresent(logger echo.Logger, db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
 	// normalPresents := make([]*PresentAllMaster, 0, 50)
 	// query := `
 	// SELECT m.*
@@ -1043,7 +1043,9 @@ func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*
 		return nil, err
 	}
 
+	logger.Debugf("fetched all presents info from the master. %d records.", len(normalPresentCaondidates))
 	normalPresents := getUnusedPresentAllIdsAndAppend(userID, normalPresentCaondidates)
+	logger.Debugf("get unused presents. %d records remaining.", len(normalPresents))
 
 	// 全員プレゼント取得情報更新
 	obtainPresents := make([]*UserPresent, 0, len(normalPresents))
@@ -1383,7 +1385,7 @@ func (h *Handler) createUser(c echo.Context) error {
 	insertOrUpdateUserDeck(initDeck)
 
 	// ログイン処理
-	user, loginBonuses, presents, err := h.loginProcess(db, user.ID, requestAt)
+	user, loginBonuses, presents, err := h.loginProcess(c.Logger(), db, user.ID, requestAt)
 	if err != nil {
 		if err == ErrUserNotFound || err == ErrItemNotFound || err == ErrLoginBonusRewardNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
@@ -1547,7 +1549,7 @@ func (h *Handler) login(c echo.Context) error {
 	}
 
 	// login process
-	user, loginBonuses, presents, err := h.loginProcess(db, req.UserID, requestAt)
+	user, loginBonuses, presents, err := h.loginProcess(c.Logger(), db, req.UserID, requestAt)
 	if err != nil {
 		if err == ErrUserNotFound || err == ErrItemNotFound || err == ErrLoginBonusRewardNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
