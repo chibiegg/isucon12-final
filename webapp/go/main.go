@@ -23,6 +23,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	gommonLog "github.com/labstack/gommon/log"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
@@ -568,6 +569,7 @@ func main() {
 
 	e := echo.New()
 	e.Logger.Debug("main is called.")
+	e.Logger.SetLevel(gommonLog.WARN)
 
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
