@@ -684,6 +684,7 @@ func getUser(userID int64) *User {
 
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	zerolog.SetGlobalLevel(0)
 
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
