@@ -605,10 +605,8 @@ func loadUserItems(h *Handler) error {
 func getUserItems(userID int64) []*UserItem {
 	userItemsMutex.RLock()
 	items := userItemsMap[userID]
-	globalLogger.Errorf("%d user has %d items. %#v", userID, len(items), items)
 	copied := make([]*UserItem, len(items))
 	copy(copied, items)
-	globalLogger.Errorf("copied has %d items. %#v", len(copied), copied)
 	userItemsMutex.RUnlock()
 
 	return copied
@@ -623,8 +621,6 @@ func insertUserItems(userID int64, items []*UserItem) {
 	for _, i := range userItemsMap[userID] {
 		tmp[i.ItemID] = i
 	}
-	globalLogger.Errorf("current item = %#v", itemsInDB)
-	globalLogger.Errorf("inserting item = %#v", items)
 	updates := make([]*UserItem, 0)
 	for _, i := range items {
 		if val, found := tmp[i.ItemID]; found {
@@ -635,7 +631,6 @@ func insertUserItems(userID int64, items []*UserItem) {
 		}
 	}
 	itemsInDB = append(itemsInDB, updates...)
-	globalLogger.Errorf("new item = %#v", itemsInDB)
 	userItemsMap[userID] = itemsInDB
 
 	userItemsMutex.Unlock()
