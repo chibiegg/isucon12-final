@@ -610,7 +610,22 @@ func getUserItems(userID int64) []*UserItem {
 
 func insertUserItems(userID int64, items []*UserItem) {
 	userItemsMutex.Lock()
-	userItemsMap[userID] = items
+	tmp := map[int64]*UserItem{}
+	itemsInDB := userItemsMap[userID]
+	for _, i := range userItemsMap[userID] {
+		tmp[i.ItemID] = i
+	}
+	updates := make([]*UserItem, 0)
+	for _, i := range items {
+		if val, found := tmp[i.ItemID]; found {
+			val.Amount += i.Amount
+			val.UpdatedAt = i.UpdatedAt
+		} else {
+			updates = append(updates, i)
+		}
+	}
+	itemsInDB = append(itemsInDB, updates...)
+	userItemsMap[userID] = itemsInDB
 	userItemsMutex.Unlock()
 }
 
