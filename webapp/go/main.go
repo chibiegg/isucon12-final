@@ -644,6 +644,7 @@ func loadGachaMasters(h *Handler) error {
 	gachaMastersMutex.Lock()
 	defer gachaMastersMutex.Unlock()
 
+	gachaMastersMap = map[int64]*GachaMaster{}
 	tmp := make([]*GachaMaster, 0, 40)
 	if err := h.DB1.Select(&tmp, "SELECT * FROM gacha_masters ORDER BY display_order ASC"); err != nil {
 		return err
