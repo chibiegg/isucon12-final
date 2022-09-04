@@ -57,10 +57,11 @@ const (
 )
 
 type Handler struct {
-	DB1 *sqlx.DB
-	DB2 *sqlx.DB
-	DB3 *sqlx.DB
-	DB4 *sqlx.DB
+	logger echo.Logger
+	DB1    *sqlx.DB
+	DB2    *sqlx.DB
+	DB3    *sqlx.DB
+	DB4    *sqlx.DB
 }
 
 var userOneTimeTokenMapMutex sync.RWMutex
@@ -556,10 +557,11 @@ func loadUserPresentAllMaster(h *Handler) error {
 	userPresentAllMasterMutex.Lock()
 	defer userPresentAllMasterMutex.Unlock()
 
-	userPresentAllMasterMap := make([]*PresentAllMaster, 0, 30)
+	userPresentAllMasterMap := make([]*PresentAllMaster, 0, 28)
 	if err := h.DB1.Select(&userPresentAllMasterMap, "SELECT * FROM present_all_masters"); err != nil {
 		return err
 	}
+	h.logger.Warnf("present_all_masters: %d records loaded. details : %#v", len(userPresentAllMasterMap), userPresentAllMasterMap)
 
 	return nil
 }
@@ -636,10 +638,11 @@ func main() {
 	defer dbx4.Close()
 
 	h := &Handler{
-		DB1: dbx1,
-		DB2: dbx2,
-		DB3: dbx3,
-		DB4: dbx4,
+		DB1:    dbx1,
+		DB2:    dbx2,
+		DB3:    dbx3,
+		DB4:    dbx4,
+		logger: e.Logger,
 	}
 
 	e.Logger.Debug("connected to DBs.")
