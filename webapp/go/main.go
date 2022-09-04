@@ -605,8 +605,10 @@ func loadUserItems(h *Handler) error {
 func getUserItems(userID int64) []*UserItem {
 	userItemsMutex.RLock()
 	items := userItemsMap[userID]
+	globalLogger.Errorf("%d user has %d items. %#v", userID, len(items), items)
 	copied := make([]*UserItem, 0, len(items))
 	copy(copied, items)
+	globalLogger.Errorf("copied has %d items. %#v", len(copied), copied)
 	userItemsMutex.RUnlock()
 
 	return copied
