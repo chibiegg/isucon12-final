@@ -2602,7 +2602,7 @@ func (h *Handler) health(c *fiber.Ctx) error {
 func errorResponse(c *fiber.Ctx, statusCode int, err error) error {
 	log.Error().Msgf("status=%d, err=%+v", statusCode, errors.WithStack(err))
 
-	return c.Status(fiber.StatusOK).JSON(struct {
+	return c.Status(statusCode).JSON(struct {
 		StatusCode int    `json:"status_code"`
 		Message    string `json:"message"`
 	}{
