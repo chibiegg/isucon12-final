@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"net"
@@ -17,11 +15,15 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/goccy/go-json"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 
 	_ "net/http/pprof"
@@ -51,14 +53,11 @@ const (
 	SQLDirectory string = "../sql/"
 )
 
-var globalLogger echo.Logger
-
 type Handler struct {
-	logger echo.Logger
-	DB1    *sqlx.DB
-	DB2    *sqlx.DB
-	DB3    *sqlx.DB
-	DB4    *sqlx.DB
+	DB1 *sqlx.DB
+	DB2 *sqlx.DB
+	DB3 *sqlx.DB
+	DB4 *sqlx.DB
 }
 
 var userOneTimeTokenMapMutex sync.RWMutex
@@ -95,13 +94,13 @@ type UserDeviceMapKey struct {
 var userDeviceMutex sync.RWMutex
 var userDeviceMap map[UserDeviceMapKey]*UserDevice
 
-func initializeLocalCache(log echo.Logger, h *Handler) error {
+func initializeLocalCache(h *Handler) error {
 	if err := loadIdGenerator2(h.DB1); err != nil {
 		return err
 	}
 	clearGachaItemMasterMap()
 
-	log.Debug("initializeLocalCache: Start load*** functions")
+	log.Debug().Msg("initializeLocalCache: Start load*** functions")
 
 	var eg errgroup.Group
 	eg.Go(func() error { return loadUserOneTime(h) })
@@ -122,7 +121,7 @@ func initializeLocalCache(log echo.Logger, h *Handler) error {
 	eg.Go(func() error { return loadUserItems(h) })
 	eg.Go(func() error { return loadGachaMasters(h) })
 
-	log.Debug("initializeLocalCache: Queued all load*** functions. Waiting...")
+	log.Debug().Msg("initializeLocalCache: Queued all load*** functions. Waiting...")
 
 	return eg.Wait()
 }
@@ -594,8 +593,6 @@ func loadUserItems(h *Handler) error {
 		}
 	}
 
-	h.logger.Errorf("loaded items. %d users have some items.", len(userItemsMap))
-
 	return nil
 }
 
@@ -686,6 +683,8 @@ func getUser(userID int64) *User {
 }
 
 func main() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	zerolog.SetGlobalLevel(0)
 
 	rand.Seed(time.Now().UnixNano())
 	time.Local = time.FixedZone("Local", 9*60*60)
@@ -697,114 +696,105 @@ func main() {
 
 	userOneTimeTokenMap = map[int64]UserOneTimeToken{}
 
-	e := echo.New()
-	e.Logger.Debug("main is called.")
-	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Output: io.Discard,
-	}))
-	e.Logger.SetLevel(0)
-
-	// e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"*"},
-		AllowMethods: []string{http.MethodGet, http.MethodPost},
-		AllowHeaders: []string{"Content-Type", "x-master-version", "x-session"},
+	app := fiber.New(fiber.Config{
+		JSONEncoder: json.Marshal,
+		JSONDecoder: json.Unmarshal,
+	})
+	app.Use(recover.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowMethods: "GET, POST",
+		AllowHeaders: "Content-Type, x-master-version, x-session",
 	}))
 
 	// connect db
 	dbx1, err := connectDB1(false)
 	if err != nil {
-		e.Logger.Fatalf("failed to connect to db: %v", err)
+		log.Fatal().Err(err).Msg("failed to connect to db")
 	}
 	defer dbx1.Close()
 
 	// connect db2
 	dbx2, err := connectDB2(false)
 	if err != nil {
-		e.Logger.Fatalf("failed to connect to db2: %v", err)
+		log.Fatal().Err(err).Msg("failed to connect to db2")
 	}
 	defer dbx2.Close()
 
 	// connect db3
 	dbx3, err := connectDB3(false)
 	if err != nil {
-		e.Logger.Fatalf("failed to connect to db2: %v", err)
+		log.Fatal().Err(err).Msg("failed to connect to db3")
 	}
 	defer dbx3.Close()
 
 	// connect db4
 	dbx4, err := connectDB4(false)
 	if err != nil {
-		e.Logger.Fatalf("failed to connect to db2: %v", err)
+		log.Fatal().Err(err).Msg("failed to connect to db4")
 	}
 	defer dbx4.Close()
 
 	h := &Handler{
-		DB1:    dbx1,
-		DB2:    dbx2,
-		DB3:    dbx3,
-		DB4:    dbx4,
-		logger: e.Logger,
+		DB1: dbx1,
+		DB2: dbx2,
+		DB3: dbx3,
+		DB4: dbx4,
 	}
-	globalLogger = e.Logger
 
-	e.Logger.Debug("connected to DBs.")
-
-	err = initializeLocalCache(e.Logger, h)
+	err = initializeLocalCache(h)
 	if err != nil {
-		e.Logger.Fatalf("failed to init local cache. err=%+v", errors.WithStack(err))
+		log.Fatal().Err(err).Msg("failed to init local cache")
 	}
 
 	// setting server
 	// e.Server.Addr = fmt.Sprintf(":%v", "8080")
 
 	// e.Use(middleware.CORS())
-	e.JSONSerializer = &JsonSerializer{}
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{}))
+	app.Use(cors.New(cors.Config{}))
+	// app.JSONSerializer = &JsonSerializer{}
 
 	// utility
-	e.POST("/initialize", h.initialize)
-	e.GET("/health", h.health)
+	app.Post("/initialize", h.initialize)
+	app.Get("/health", h.health)
 
 	// feature
-	API := e.Group("", h.apiMiddleware)
-	API.POST("/user", h.createUser)
-	API.POST("/login", h.login)
-	sessCheckAPI := API.Group("", h.checkSessionMiddleware)
-	sessCheckAPI.GET("/user/:userID/gacha/index", h.listGacha)
-	sessCheckAPI.POST("/user/:userID/gacha/draw/:gachaID/:n", h.drawGacha)
-	sessCheckAPI.GET("/user/:userID/present/index/:n", h.listPresent)
-	sessCheckAPI.POST("/user/:userID/present/receive", h.receivePresent)
-	sessCheckAPI.GET("/user/:userID/item", h.listItem)
-	sessCheckAPI.POST("/user/:userID/card/addexp/:cardID", h.addExpToCard)
-	sessCheckAPI.POST("/user/:userID/card", h.updateDeck)
-	sessCheckAPI.POST("/user/:userID/reward", h.reward)
-	sessCheckAPI.GET("/user/:userID/home", h.home)
+	API := app.Group("", h.apiMiddleware)
+	API.Post("/user", h.createUser)
+	API.Post("/login", h.login)
+	sessCheckAPI := API.Group("/user/:userID", h.checkSessionMiddleware)
+	sessCheckAPI.Get("/gacha/index", h.listGacha)
+	sessCheckAPI.Post("/gacha/draw/:gachaID/:n", h.drawGacha)
+	sessCheckAPI.Get("/present/index/:n", h.listPresent)
+	sessCheckAPI.Post("/present/receive", h.receivePresent)
+	sessCheckAPI.Get("/item", h.listItem)
+	sessCheckAPI.Post("/card/addexp/:cardID", h.addExpToCard)
+	sessCheckAPI.Post("/card", h.updateDeck)
+	sessCheckAPI.Post("/reward", h.reward)
+	sessCheckAPI.Get("/home", h.home)
 
 	// admin
-	adminAPI := e.Group("", h.adminMiddleware)
-	adminAPI.POST("/admin/login", h.adminLogin)
+	adminAPI := app.Group("", h.adminMiddleware)
+	adminAPI.Post("/admin/login", h.adminLogin)
 	adminAuthAPI := adminAPI.Group("", h.adminSessionCheckMiddleware)
-	adminAuthAPI.DELETE("/admin/logout", h.adminLogout)
-	adminAuthAPI.GET("/admin/master", h.adminListMaster)
-	adminAuthAPI.PUT("/admin/master", h.adminUpdateMaster)
-	adminAuthAPI.GET("/admin/user/:userID", h.adminUser)
-	adminAuthAPI.POST("/admin/user/:userID/ban", h.adminBanUser)
+	adminAuthAPI.Delete("/admin/logout", h.adminLogout)
+	adminAuthAPI.Get("/admin/master", h.adminListMaster)
+	adminAuthAPI.Put("/admin/master", h.adminUpdateMaster)
+	adminAuthAPI.Get("/admin/user/:userID", h.adminUser)
+	adminAuthAPI.Post("/admin/user/:userID/ban", h.adminBanUser)
 
 	// e.Logger.Infof("Start server: address=%s", e.Server.Addr)
 	socketFile := "/tmp/isucon.sock"
 	os.Remove(socketFile)
 	l, err := net.Listen("unix", socketFile)
 	if err != nil {
-		e.Logger.Fatal(err)
+		log.Fatal().Err(err).Msg("failed to open unix socket")
 	}
 	err = os.Chmod(socketFile, 0777)
 	if err != nil {
-		e.Logger.Fatal(err)
+		log.Fatal().Err(err).Msg("failed to change permission")
 	}
-	e.Listener = l
-	e.Logger.Error(e.StartServer(e.Server))
+	log.Fatal().Err(app.Listener(l))
 }
 
 func connectDB(host string, batch bool) (*sqlx.DB, error) {
@@ -822,7 +812,8 @@ func connectDB(host string, batch bool) (*sqlx.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbx.SetMaxIdleConns(100)
+	dbx.SetMaxOpenConns(64)
+	dbx.SetMaxIdleConns(64)
 	return dbx, nil
 }
 
@@ -874,93 +865,86 @@ func (h *Handler) getMasterDatabase() *sqlx.DB {
 }
 
 // adminMiddleware
-func (h *Handler) adminMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		requestAt := time.Now()
-		c.Set("requestTime", requestAt.Unix())
+func (h *Handler) adminMiddleware(c *fiber.Ctx) error {
+	requestAt := time.Now()
+	c.Locals("requestTime", requestAt.Unix())
 
-		// next
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
-		return nil
+	// next
+	if err := c.Next(); err != nil {
+		return err
 	}
+	return nil
 }
 
 // apiMiddleware
-func (h *Handler) apiMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		requestAt, err := time.Parse(time.RFC1123, c.Request().Header.Get("x-isu-date"))
-		if err != nil {
-			requestAt = time.Now()
-		}
-		c.Set("requestTime", requestAt.Unix())
-
-		// マスタ確認
-		if strconv.FormatInt(versionMasterValue, 10) != c.Request().Header.Get("x-master-version") {
-			return errorResponse(c, http.StatusUnprocessableEntity, ErrInvalidMasterVersion)
-		}
-
-		// check ban
-		userID, err := getUserID(c)
-		if err == nil && userID != 0 {
-			isBan, err := h.checkBan(userID)
-			if err != nil {
-				return errorResponse(c, http.StatusInternalServerError, err)
-			}
-			if isBan {
-				return errorResponse(c, http.StatusForbidden, ErrForbidden)
-			}
-		}
-
-		// next
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
-		return nil
+func (h *Handler) apiMiddleware(c *fiber.Ctx) error {
+	requestAt, err := time.Parse(time.RFC1123, c.Get("x-isu-date"))
+	if err != nil {
+		requestAt = time.Now()
 	}
+	c.Locals("requestTime", requestAt.Unix())
+
+	// マスタ確認
+	if strconv.FormatInt(versionMasterValue, 10) != c.Get("x-master-version") {
+		return errorResponse(c, http.StatusUnprocessableEntity, ErrInvalidMasterVersion)
+	}
+
+	// check ban
+	userID, err := getUserID(c)
+	if err == nil && userID != 0 {
+		isBan, err := h.checkBan(userID)
+		if err != nil {
+			return errorResponse(c, http.StatusInternalServerError, err)
+		}
+		if isBan {
+			return errorResponse(c, http.StatusForbidden, ErrForbidden)
+		}
+	}
+
+	// next
+	if err := c.Next(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // checkSessionMiddleware
-func (h *Handler) checkSessionMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
-
-	return func(c echo.Context) error {
-		sessID := c.Request().Header.Get("x-session")
-		if sessID == "" {
-			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
-		}
-
-		userID, err := getUserID(c)
-		if err != nil {
-			return errorResponse(c, http.StatusBadRequest, err)
-		}
-
-		requestAt, err := getRequestTime(c)
-		if err != nil {
-			return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
-		}
-
-		sessionMutex.RLock()
-		userSession := sessionIdMap[sessID]
-		sessionMutex.RUnlock()
-
-		if userSession == nil {
-			return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
-		}
-		if userSession.UserID != userID {
-			return errorResponse(c, http.StatusForbidden, ErrForbidden)
-		}
-
-		if userSession.ExpiredAt < requestAt {
-			return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
-		}
-
-		// next
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
-		return nil
+func (h *Handler) checkSessionMiddleware(c *fiber.Ctx) error {
+	sessID := c.Get("x-session")
+	if sessID == "" {
+		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
 	}
+
+	userID, err := getUserID(c)
+	if err != nil {
+		return errorResponse(c, http.StatusBadRequest, err)
+	}
+
+	requestAt, err := getRequestTime(c)
+	if err != nil {
+		return errorResponse(c, http.StatusInternalServerError, ErrGetRequestTime)
+	}
+
+	sessionMutex.RLock()
+	userSession := sessionIdMap[sessID]
+	sessionMutex.RUnlock()
+
+	if userSession == nil {
+		return errorResponse(c, http.StatusUnauthorized, ErrUnauthorized)
+	}
+	if userSession.UserID != userID {
+		return errorResponse(c, http.StatusForbidden, ErrForbidden)
+	}
+
+	if userSession.ExpiredAt < requestAt {
+		return errorResponse(c, http.StatusUnauthorized, ErrExpiredSession)
+	}
+
+	// next
+	if err := c.Next(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // checkOneTimeToken
@@ -1019,8 +1003,8 @@ func (h *Handler) checkBan(userID int64) (bool, error) {
 }
 
 // getRequestTime リクエストを受けた時間をコンテキストからunixtimeで取得する
-func getRequestTime(c echo.Context) (int64, error) {
-	v := c.Get("requestTime")
+func getRequestTime(c *fiber.Ctx) (int64, error) {
+	v := c.Locals("requestTime")
 	if requestTime, ok := v.(int64); ok {
 		return requestTime, nil
 	}
@@ -1028,7 +1012,7 @@ func getRequestTime(c echo.Context) (int64, error) {
 }
 
 // loginProcess ログイン処理
-func (h *Handler) loginProcess(logger echo.Logger, db *sqlx.DB, userID int64, requestAt int64) (*User, []*UserLoginBonus, []*UserPresent, error) {
+func (h *Handler) loginProcess(db *sqlx.DB, userID int64, requestAt int64) (*User, []*UserLoginBonus, []*UserPresent, error) {
 	user := getUser(userID)
 	if user == nil {
 		return nil, nil, nil, ErrUserNotFound
@@ -1041,7 +1025,7 @@ func (h *Handler) loginProcess(logger echo.Logger, db *sqlx.DB, userID int64, re
 	}
 
 	// 全員プレゼント取得
-	allPresents, err := h.obtainPresent(logger, db, userID, requestAt)
+	allPresents, err := h.obtainPresent(db, userID, requestAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1162,7 +1146,7 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 }
 
 // obtainPresent プレゼント付与処理
-func (h *Handler) obtainPresent(logger echo.Logger, db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
+func (h *Handler) obtainPresent(db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
 	normalPresentCaondidates := getPresentAllMasters(requestAt)
 	normalPresents := getUnusedPresentAllIdsAndAppend(userID, normalPresentCaondidates)
 
@@ -1328,8 +1312,8 @@ func (h *Handler) recordObtainItemResult(currentItems *ObtainItemProgress, db *s
 	return nil
 }
 
-func deleteUnusedRecords(c echo.Context, mod int, db *sqlx.DB) {
-	c.Logger().Infof("Deleting % 4 == %d records from DB", mod)
+func deleteUnusedRecords(c *fiber.Ctx, mod int, db *sqlx.DB) {
+	log.Info().Msgf("Deleting % 4 == %d records from DB", mod)
 	db.Exec("DELETE FROM user_bans WHERE user_id % 4 != ?", mod)
 	db.Exec("DELETE FROM user_cards WHERE user_id % 4 != ?", mod)
 	db.Exec("DELETE FROM user_decks WHERE user_id % 4 != ?", mod)
@@ -1346,7 +1330,7 @@ func deleteUnusedRecords(c echo.Context, mod int, db *sqlx.DB) {
 
 // initialize 初期化処理
 // POST /initialize
-func (h *Handler) initialize(c echo.Context) error {
+func (h *Handler) initialize(c *fiber.Ctx) error {
 	dbx, err := connectDB1(true) // Masterは1
 	if err != nil {
 		return errorResponse(c, http.StatusInternalServerError, err)
@@ -1355,7 +1339,7 @@ func (h *Handler) initialize(c echo.Context) error {
 
 	out, err := exec.Command("/bin/sh", "-c", SQLDirectory+"init.sh").CombinedOutput()
 	if err != nil {
-		c.Logger().Errorf("Failed to initialize %s: %v", string(out), err)
+		log.Error().Msgf("Failed to initialize %s: %v", string(out), err)
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1368,9 +1352,9 @@ func (h *Handler) initialize(c echo.Context) error {
 	}
 	eg.Wait()
 
-	err = initializeLocalCache(c.Logger(), h)
+	err = initializeLocalCache(h)
 	if err != nil {
-		c.Logger().Errorf("failed to init local cache: %v", err)
+		log.Error().Msgf("failed to init local cache: %v", err)
 		return errorResponse(c, http.StatusInternalServerError, err)
 	}
 
@@ -1385,9 +1369,9 @@ type InitializeResponse struct {
 
 // createUser ユーザの作成
 // POST /user
-func (h *Handler) createUser(c echo.Context) error {
+func (h *Handler) createUser(c *fiber.Ctx) error {
 	// parse body
-	defer c.Request().Body.Close()
+
 	req := new(CreateUserRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1503,7 +1487,7 @@ func (h *Handler) createUser(c echo.Context) error {
 	insertOrUpdateUserDeck(initDeck)
 
 	// ログイン処理
-	user, loginBonuses, presents, err := h.loginProcess(c.Logger(), db, user.ID, requestAt)
+	user, loginBonuses, presents, err := h.loginProcess(db, user.ID, requestAt)
 	if err != nil {
 		if err == ErrUserNotFound || err == ErrItemNotFound || err == ErrLoginBonusRewardNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
@@ -1568,8 +1552,8 @@ type CreateUserResponse struct {
 
 // login ログイン
 // POST /login
-func (h *Handler) login(c echo.Context) error {
-	defer c.Request().Body.Close()
+func (h *Handler) login(c *fiber.Ctx) error {
+
 	req := new(LoginRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1667,7 +1651,7 @@ func (h *Handler) login(c echo.Context) error {
 	}
 
 	// login process
-	user, loginBonuses, presents, err := h.loginProcess(c.Logger(), db, req.UserID, requestAt)
+	user, loginBonuses, presents, err := h.loginProcess(db, req.UserID, requestAt)
 	if err != nil {
 		if err == ErrUserNotFound || err == ErrItemNotFound || err == ErrLoginBonusRewardNotFound {
 			return errorResponse(c, http.StatusNotFound, err)
@@ -1731,7 +1715,7 @@ func (h *Handler) loadGachaItemMasters(gachaId int64) ([]*GachaItemMaster, error
 
 // listGacha ガチャ一覧
 // GET /user/{userID}/gacha/index
-func (h *Handler) listGacha(c echo.Context) error {
+func (h *Handler) listGacha(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1827,18 +1811,18 @@ type GachaData struct {
 
 // drawGacha ガチャを引く
 // POST /user/{userID}/gacha/draw/{gachaID}/{n}
-func (h *Handler) drawGacha(c echo.Context) error {
+func (h *Handler) drawGacha(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
 
-	gachaID := c.Param("gachaID")
+	gachaID := c.Params("gachaID")
 	if gachaID == "" {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid gachaID"))
 	}
 
-	gachaCount, err := strconv.ParseInt(c.Param("n"), 10, 64)
+	gachaCount, err := strconv.ParseInt(c.Params("n"), 10, 64)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
@@ -1846,7 +1830,6 @@ func (h *Handler) drawGacha(c echo.Context) error {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid draw gacha times"))
 	}
 
-	defer c.Request().Body.Close()
 	req := new(DrawGachaRequest)
 	if err = parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -1986,8 +1969,8 @@ type DrawGachaResponse struct {
 
 // listPresent プレゼント一覧
 // GET /user/{userID}/present/index/{n}
-func (h *Handler) listPresent(c echo.Context) error {
-	n, err := strconv.Atoi(c.Param("n"))
+func (h *Handler) listPresent(c *fiber.Ctx) error {
+	n, err := strconv.Atoi(c.Params("n"))
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, fmt.Errorf("invalid index number (n) parameter"))
 	}
@@ -2021,9 +2004,9 @@ type ListPresentResponse struct {
 
 // receivePresent プレゼント受け取り
 // POST /user/{userID}/present/receive
-func (h *Handler) receivePresent(c echo.Context) error {
+func (h *Handler) receivePresent(c *fiber.Ctx) error {
 	// read body
-	defer c.Request().Body.Close()
+
 	req := new(ReceivePresentRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -2123,7 +2106,7 @@ type ReceivePresentResponse struct {
 
 // listItem アイテムリスト
 // GET /user/{userID}/item
-func (h *Handler) listItem(c echo.Context) error {
+func (h *Handler) listItem(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -2191,8 +2174,8 @@ type ListItemResponse struct {
 
 // addExpToCard 装備強化
 // POST /user/{userID}/card/addexp/{cardID}
-func (h *Handler) addExpToCard(c echo.Context) error {
-	cardID, err := strconv.ParseInt(c.Param("cardID"), 10, 64)
+func (h *Handler) addExpToCard(c *fiber.Ctx) error {
+	cardID, err := strconv.ParseInt(c.Params("cardID"), 10, 64)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
@@ -2203,7 +2186,7 @@ func (h *Handler) addExpToCard(c echo.Context) error {
 	}
 
 	// read body
-	defer c.Request().Body.Close()
+
 	req := new(AddExpToCardRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -2408,7 +2391,7 @@ type TargetUserCardData struct {
 
 // updateDeck 装備変更
 // POST /user/{userID}/card
-func (h *Handler) updateDeck(c echo.Context) error {
+func (h *Handler) updateDeck(c *fiber.Ctx) error {
 
 	userID, err := getUserID(c)
 	if err != nil {
@@ -2416,7 +2399,7 @@ func (h *Handler) updateDeck(c echo.Context) error {
 	}
 
 	// read body
-	defer c.Request().Body.Close()
+
 	req := new(UpdateDeckRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -2485,14 +2468,14 @@ type UpdateDeckResponse struct {
 
 // reward ゲーム報酬受取
 // POST /user/{userID}/reward
-func (h *Handler) reward(c echo.Context) error {
+func (h *Handler) reward(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
 	}
 
 	// parse body
-	defer c.Request().Body.Close()
+
 	req := new(RewardRequest)
 	if err := parseRequestBody(c, req); err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -2557,7 +2540,7 @@ type RewardResponse struct {
 
 // home ホーム取得
 // GET /user/{userID}/home
-func (h *Handler) home(c echo.Context) error {
+func (h *Handler) home(c *fiber.Ctx) error {
 	userID, err := getUserID(c)
 	if err != nil {
 		return errorResponse(c, http.StatusBadRequest, err)
@@ -2613,15 +2596,15 @@ type HomeResponse struct {
 // util
 
 // health ヘルスチェック
-func (h *Handler) health(c echo.Context) error {
-	return c.String(http.StatusOK, "OK")
+func (h *Handler) health(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusOK).SendString("OK")
 }
 
 // errorResponse returns error.
-func errorResponse(c echo.Context, statusCode int, err error) error {
-	c.Logger().Errorf("status=%d, err=%+v", statusCode, errors.WithStack(err))
+func errorResponse(c *fiber.Ctx, statusCode int, err error) error {
+	log.Error().Msgf("status=%d, err=%+v", statusCode, errors.WithStack(err))
 
-	return c.JSON(statusCode, struct {
+	return c.Status(statusCode).JSON(struct {
 		StatusCode int    `json:"status_code"`
 		Message    string `json:"message"`
 	}{
@@ -2631,13 +2614,13 @@ func errorResponse(c echo.Context, statusCode int, err error) error {
 }
 
 // successResponse responds success.
-func successResponse(c echo.Context, v interface{}) error {
-	return c.JSON(http.StatusOK, v)
+func successResponse(c *fiber.Ctx, v interface{}) error {
+	return c.JSON(v)
 }
 
 // noContentResponse
-func noContentResponse(c echo.Context, status int) error {
-	return c.NoContent(status)
+func noContentResponse(c *fiber.Ctx, status int) error {
+	return c.SendStatus(status)
 }
 
 var idGenerator2 int64
@@ -2662,8 +2645,8 @@ func generateUUID() (string, error) {
 }
 
 // getUserID gets userID by path param.
-func getUserID(c echo.Context) (int64, error) {
-	return strconv.ParseInt(c.Param("userID"), 10, 64)
+func getUserID(c *fiber.Ctx) (int64, error) {
+	return strconv.ParseInt(c.Params("userID"), 10, 64)
 }
 
 // getEnv gets environment variable.
@@ -2676,12 +2659,8 @@ func getEnv(key, defaultVal string) string {
 }
 
 // parseRequestBody parses request body.
-func parseRequestBody(c echo.Context, dist interface{}) error {
-	buf, err := io.ReadAll(c.Request().Body)
-	if err != nil {
-		return ErrInvalidRequestBody
-	}
-	if err = json.Unmarshal(buf, &dist); err != nil {
+func parseRequestBody(c *fiber.Ctx, dist interface{}) error {
+	if err := c.BodyParser(&dist); err != nil {
 		return ErrInvalidRequestBody
 	}
 	return nil
