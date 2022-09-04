@@ -557,11 +557,10 @@ func loadUserPresentAllMaster(h *Handler) error {
 	userPresentAllMasterMutex.Lock()
 	defer userPresentAllMasterMutex.Unlock()
 
-	userPresentAllMasterMap := make([]*PresentAllMaster, 0, 28)
+	userPresentAllMasterMap = make([]*PresentAllMaster, 0, 28)
 	if err := h.DB1.Select(&userPresentAllMasterMap, "SELECT * FROM present_all_masters"); err != nil {
 		return err
 	}
-	h.logger.Warnf("present_all_masters: %d records loaded. details : %#v", len(userPresentAllMasterMap), userPresentAllMasterMap)
 
 	return nil
 }
@@ -1059,7 +1058,6 @@ func (h *Handler) obtainLoginBonus(db *sqlx.DB, userID int64, requestAt int64) (
 
 // obtainPresent プレゼント付与処理
 func (h *Handler) obtainPresent(logger echo.Logger, db *sqlx.DB, userID int64, requestAt int64) ([]*UserPresent, error) {
-	logger.Warnf("all presents: %#v", userPresentAllMasterMap)
 	normalPresentCaondidates := getPresentAllMasters(requestAt)
 	logger.Warnf("fetched all presents info from the master. %d records.", len(normalPresentCaondidates))
 	normalPresents := getUnusedPresentAllIdsAndAppend(userID, normalPresentCaondidates)
